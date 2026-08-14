@@ -59,8 +59,14 @@ import {
   BROWSER_MAX_WIDTH,
   BROWSER_MIN_WIDTH,
   BrowserPanel,
+  readBrowserEnabled,
   useBrowserPanel,
 } from "@/modules/browser";
+import {
+  LeftPanelEmpty,
+  LeftPanelSwitcher,
+  useLeftPanel,
+} from "@/modules/left-panel";
 import {
   SIDEBAR_MAX_WIDTH,
   SIDEBAR_MIN_WIDTH,
@@ -318,7 +324,16 @@ export default function App() {
     toggleExplorerFocus,
   } = useSidebarPanel(explorerRef);
 
-  const browser = useBrowserPanel();
+  // Read straight from storage rather than from the hook below: the hook needs
+  // the left panel's mode to know whether to show itself, so the flag has to be
+  // resolved first. `setEnabled` writes storage before it sets state, so the two
+  // never disagree across a render.
+  const leftPanel = useLeftPanel(readBrowserEnabled());
+  const browserVisible = leftPanel.open && leftPanel.mode === "browser";
+  const browser = useBrowserPanel({
+    mounted: leftPanel.open,
+    visible: browserVisible,
+  });
 
   const [newEditorOpen, setNewEditorOpen] = useState(false);
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
@@ -1184,6 +1199,7 @@ export default function App() {
 
   const spaceSwitcher = (
     <SpaceSwitcher
+      compact
       open={switcherOpen}
       onOpenChange={setSwitcherOpen}
       tabs={tabs}
@@ -1195,6 +1211,21 @@ export default function App() {
       onMoveTabToSpace={handleMoveTab}
       onReorderTab={handleReorderTab}
       onReorderSpaces={(ids) => useSpaces.getState().reorder(ids)}
+    />
+  );
+
+  const leftPanelSwitcher = (
+    <LeftPanelSwitcher
+      mode={leftPanel.mode}
+      open={leftPanel.open}
+      browserAvailable={browser.enabled}
+      onSelect={(next) => {
+        // Always select and show. Folding the panel away on a second click of
+        // the active mode reads as a dead button when the panel is what you
+        // were looking at; closing has its own control in the cluster.
+        leftPanel.setMode(next);
+        leftPanel.setOpen(true);
+      }}
     />
   );
 
@@ -1349,12 +1380,13 @@ export default function App() {
           {!zenMode && (
             <Header
               onToggleSidebar={toggleSidebar}
-              onToggleBrowser={() => browser.setEnabled(!browser.enabled)}
-              browserEnabled={browser.enabled}
+              onToggleLeftPanel={() => leftPanel.setOpen(!leftPanel.open)}
+              leftPanelOpen={leftPanel.open}
               onOpenCommandPalette={() => openCommandPalette("commands")}
               onActivateAgent={onActivateAgent}
               onActivateLocalAgent={onActivateLocalAgent}
               onOpenSettings={() => void openSettingsWindow()}
+              leftPanelSwitcher={leftPanelSwitcher}
               spaceSwitcher={spaceSwitcher}
               searchTarget={searchTarget}
               searchRef={searchInlineRef}
@@ -1371,16 +1403,30 @@ export default function App() {
                 const browserWidth =
                   browser.panelRef.current?.getSize().inPixels ?? 0;
                 browser.persistWidth(browserWidth, isUserInteraction);
-
               }}
             >
-              {browser.enabled && (
-                  <ResizablePanel
-                    id="browser"
-                    panelRef={browser.panelRef}
-                    defaultSize={browser.initialSize}
-                    minSize={`${BROWSER_MIN_WIDTH}px`}
-                    maxSize={`${BROWSER_MAX_WIDTH}px`}
+              {leftPanel.open && (
+                <ResizablePanel
+                  id="left"
+                  panelRef={browser.panelRef}
+                  defaultSize={browser.initialSize}
+                  minSize={`${BROWSER_MIN_WIDTH}px`}
+                  maxSize={`${BROWSER_MAX_WIDTH}px`}
+                >
+                <div className="relative h-full min-h-0">
+                  {/* Only the browser surface stays mounted across modes: it is
+                      a native webview, and unmounting it takes the page, the
+                      session and the CDP endpoint with it. It hides with
+                      `invisible`, never `display: none`, because the native
+                      webview is positioned from this placeholder's rectangle
+                      and an unlaid-out host measures as nothing, which reads as
+                      "not ready yet" and burns the attach retries. */}
+                  <div
+                    className={
+                      browserVisible && browser.enabled
+                        ? "absolute inset-0"
+                        : "invisible absolute inset-0"
+                    }
                   >
                     <BrowserPanel
                       hostRef={browser.hostRef}
@@ -1393,14 +1439,40 @@ export default function App() {
                       onReload={browser.reload}
                       onRetry={browser.retry}
                     />
-                  </ResizablePanel>
+                  </div>
+                  {leftPanel.mode === "browser" && !browser.enabled ? (
+                    <div className="absolute inset-0 bg-card">
+                      <LeftPanelEmpty
+                        title="The browser panel is turned off"
+                        hint="Turn it back on from the command palette."
+                      />
+                    </div>
+                  ) : null}
+                  {leftPanel.mode === "editor" ? (
+                    <div className="absolute inset-0 bg-card">
+                      <LeftPanelEmpty
+                        title="No file open here"
+                        hint="Files opened from the sidebar land in this panel while Editor is selected."
+                      />
+                    </div>
+                  ) : null}
+                  {leftPanel.mode === "ai-viewer" ? (
+                    <div className="absolute inset-0 bg-card">
+                      <LeftPanelEmpty
+                        title="No AI is working right now"
+                        hint="Running agents show up here, one lane each, read only."
+                      />
+                    </div>
+                  ) : null}
+                </div>
+                </ResizablePanel>
               )}
               {/* Dragging over a native child webview loses pointer capture, so
                   the webview hides for the gesture and the HTML placeholder
                   carries the drag. Rendered as a sibling, not wrapped in a
                   fragment with the panel: the group reads its children in DOM
                   order and a wrapper changes what it sees. */}
-              {browser.enabled && (
+              {leftPanel.open && (
                 <ResizableHandle
                   withHandle
                   onPointerDown={() => browser.suppress("handle-drag")}

@@ -40,6 +40,12 @@ type Props = {
     edge: "top" | "bottom",
   ) => void;
   onReorderSpaces: (orderedIds: string[]) => void;
+  /**
+   * Icon-only trigger. The top-left corner belongs to the left panel's mode
+   * switcher, so the overview moved into the header's control cluster, where
+   * only the space's avatar fits.
+   */
+  compact?: boolean;
 };
 
 type Edge = "top" | "bottom";
@@ -83,6 +89,7 @@ export function SpaceSwitcher({
   onMoveTabToSpace,
   onReorderTab,
   onReorderSpaces,
+  compact = false,
 }: Props) {
   const spaces = useSpaces((s) => s.spaces);
   const activeId = useSpaces((s) => s.activeId);
@@ -240,21 +247,40 @@ export function SpaceSwitcher({
       <PopoverTrigger asChild>
         <button
           type="button"
-          title={shortcut ? `Spaces · ${shortcut}` : "Spaces"}
-          className="flex h-7 shrink-0 items-center gap-2 rounded-md px-2 text-muted-foreground/90 outline-none transition-colors hover:bg-accent hover:text-foreground data-[state=open]:bg-accent data-[state=open]:text-foreground"
+          data-space-switcher
+          aria-label="Spaces"
+          title={
+            shortcut
+              ? `Spaces: ${current.name} · ${shortcut}`
+              : `Spaces: ${current.name}`
+          }
+          className={cn(
+            "flex h-7 shrink-0 items-center rounded-md text-muted-foreground/90 outline-none transition-colors hover:bg-accent hover:text-foreground data-[state=open]:bg-accent data-[state=open]:text-foreground",
+            compact ? "justify-center px-1" : "gap-2 px-2",
+          )}
         >
-          <span className="max-w-36 truncate text-xs font-medium">
-            {current.name}
-          </span>
-          <HugeiconsIcon
-            icon={ArrowRight01Icon}
-            size={14}
-            strokeWidth={1.75}
-            className="shrink-0 opacity-65"
-          />
+          {compact ? (
+            <SpaceAvatar space={current} active />
+          ) : (
+            <>
+              <span className="max-w-36 truncate text-xs font-medium">
+                {current.name}
+              </span>
+              <HugeiconsIcon
+                icon={ArrowRight01Icon}
+                size={14}
+                strokeWidth={1.75}
+                className="shrink-0 opacity-65"
+              />
+            </>
+          )}
         </button>
       </PopoverTrigger>
-      <PopoverContent align="start" sideOffset={6} className="w-[20rem] p-1.5">
+      <PopoverContent
+        align={compact ? "end" : "start"}
+        sideOffset={6}
+        className="w-[20rem] p-1.5"
+      >
         <div className="flex items-center justify-between px-1.5 pb-1.5 pt-0.5">
           <span className="text-xs font-semibold text-foreground">Spaces</span>
           {shortcut && (

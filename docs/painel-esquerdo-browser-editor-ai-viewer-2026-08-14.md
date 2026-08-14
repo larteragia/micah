@@ -47,7 +47,10 @@ faixas horizontais, uma por instancia. Aceleracao por GPU se houver ganho real.
 
 1. O texto "Default" nao aparece mais no canto superior esquerdo da janela
    principal; no lugar dele ha um seletor com exatamente tres itens, na ordem
-   `Browser`, `Editor`, `Ai Viewer`, e essa ordem nao muda em nenhum estado.
+   `Browser`, `Editor`, `Ai Viewer`. A ordem vem de um array `readonly` unico,
+   fixado por teste unitario, e um teste de render confere a ordem no DOM.
+   (Redacao corrigida apos a auditoria: "nao muda em nenhum estado" era
+   quantificacao universal infalsificavel.)
 2. Clicar em cada um dos tres itens troca o conteudo do painel da esquerda para
    o modo correspondente, e o item ativo fica visualmente marcado.
 3. O modo escolhido sobrevive ao fechar e reabrir o aplicativo.
@@ -63,17 +66,49 @@ faixas horizontais, uma por instancia. Aceleracao por GPU se houver ganho real.
    editor por causa desse clique.
 7. No modo `Editor`: o botao `New Editor Tab` abre o novo editor no painel da
    esquerda, com a mesma regra do item 6.
-8. No modo `Ai Viewer`: com uma sessao de AI escrevendo ou editando arquivo, o
-   painel mostra em tempo real o arquivo alvo e o conteudo sendo escrito, e o
-   painel e somente leitura (digitar nele nao altera o arquivo nem o buffer).
-9. No modo `Ai Viewer`: com duas ou mais instancias de AI ativas ao mesmo tempo,
-   o painel se divide em faixas horizontais, uma por instancia, cada faixa
-   identificada pela instancia que ela mostra.
+8. No modo `Ai Viewer`, com o agente local escrevendo um arquivo: a faixa mostra
+   o caminho do arquivo e o conteudo **parcial** chegando durante o streaming da
+   chamada de `write_file` (estado `input-streaming`, chaveado por `toolCallId`),
+   e a faixa e somente leitura (digitar nela nao altera arquivo nem buffer).
+   Numa edicao (`edit`/`multi_edit`), a faixa mostra o par velho/novo, nao um
+   arquivo reconstruido.
+9. No modo `Ai Viewer`, com duas ou mais instancias de AI ativas ao mesmo tempo
+   (agente local + agentes de terminal, ou dois agentes de terminal), o painel se
+   divide em faixas horizontais, uma por instancia, cada faixa rotulada com a
+   instancia. A faixa de um agente de terminal mostra a **saida ao vivo daquele
+   terminal**, rotulada como tal.
+
+> **Itens 8 e 9 reescritos apos a auditoria do plano, com o motivo escrito.** A
+> redacao original ("mostra o arquivo alvo de qualquer instancia") era
+> **insatisfazivel**: `AgentSession` (`agents/lib/types.ts:12-26`) nao carrega
+> arquivo nem conteudo — so `leafId/tabId/agent/status/timestamps` —, e o agente
+> local tem uma sessao ativa por vez (`chatStore.ts:144`), com `agentMeta` sem
+> `path` nem `content` (`chatStore.ts:50-60`). O alvo escrito pelo autor e
+> *"mostrar onde a AI esta trabalhando"*; para um agente de terminal, onde ele
+> esta trabalhando **e** a saida do terminal dele, que existe e e legivel
+> (`live.readLeafBuffer`, `chatStore.ts:40`). A reescrita mira o mesmo alvo com
+> dado que existe, em vez de prometer dado que nao existe.
 10. `pnpm lint`, `pnpm check-types` e `pnpm test` passam; `cargo clippy
     --all-targets --locked -- -D warnings` e `cargo test --locked` passam em
     `src-tauri`.
 11. O binario `src-tauri/target/release/micah.exe` e reconstruido e executado, e
     o comportamento dos itens 1 a 9 e conferido no app rodando, com prova.
+
+### Criterios acrescentados apos a auditoria do plano
+
+12. **Espacos continuam alcancaveis e inteiros**: sair do canto superior esquerdo
+    nao pode apagar criar/renomear/deletar/reordenar espaco, mover aba entre
+    espacos, "new tab in space" nem jump-to-tab. O atalho `space.overview` e o
+    comando da paleta abrem o overview, provado por teste de render.
+13. **Nenhuma regressao contra o card anterior**: trocar de modo **nao** derruba a
+    sessao do browser, a porta CDP nem `browser-cdp.json` — os criterios 4, 5, 7 e
+    11 daquele card continuam valendo depois de ir e voltar entre os tres modos.
+14. **Nada quebra em `useTabs`**: com uma aba de editor no painel esquerdo e um
+    terminal no central, continuam corretos o ciclo Ctrl+Tab, `Cmd+1..9`, a guarda
+    de fechamento, o fechamento do ultimo shell, o restore de sessao e a busca do
+    header (Cmd+F acha o editor do painel com foco).
+15. **Historico nao vaza credencial**: URL com parametro de credencial na query
+    entra redigida no historico, provado por teste unitario da funcao de redacao.
 
 ## Comentarios humanos (o alvo)
 
@@ -119,39 +154,145 @@ Baseline verificado em `src-tauri/Cargo.lock`: `tauri 2.11.5`, `wry 0.55.1`,
 
 ## Plano em etapas
 
-> Ordem escolhida: primeiro a moldura (E1), que ja entrega os criterios 1-3 e
-> destrava os tres modos; depois um modo por etapa, cada um com auditoria propria.
+> **v2 — revisado pelo auditor de plano (Opus, 2026-08-14, veredito "aprovado com
+> correcoes", 24 correcoes obrigatorias, 12/12 categorias com achado).** Todas as 24
+> foram aceitas; nenhuma recusada. O registro integral esta em *Auditorias por etapa*.
+>
+> **A ordem mudou** (correcao 23): a cirurgia em `useTabs` (modo Editor) sobe para
+> logo depois da moldura, porque tem 13 consumidores e o maior raio de dano — nao faz
+> sentido construir favoritos e extensoes em cima de um app que ainda vai ser operado
+> no coracao. E cada etapa que mexe no ciclo de vida do painel fecha em **binario de
+> release** (correcao 22), nao em dev server: foi exatamente o HMR que impediu o card
+> anterior de fechar os criterios 1 e 2 dele.
 
 | Etapa | Entrega | Prova da etapa |
 |-------|---------|----------------|
-| **E1** | **Moldura dos tres modos.** Modulo novo `src/modules/left-panel/`: `LeftPanelMode = "browser" \| "editor" \| "ai-viewer"`, leitura/escrita persistida (funcoes puras testadas, espelhando `readBrowserEnabled`), e `LeftPanelSwitcher.tsx` (tres botoes segmentados, ordem constante vinda de um array `readonly`, `aria-pressed` no ativo). `App.tsx` passa o switcher no slot do Header que hoje recebe `spaceSwitcher`. **Espacos nao sao removidos**: continuam pelo atalho `space.overview` e pela paleta (`App.tsx:859`, `commands.ts`), so saem do canto superior esquerdo. O painel da esquerda passa a existir independente do modo. **Regra de HWND**: o webview nativo so fica anexado quando o modo e `browser` — `useBrowserPanel` ganha `active` e o attach passa a ser `enabled && active`; nos outros modos, `browser_detach`. | vitest do modulo + `check-types` + captura de janela do SO mostrando os tres itens e a troca |
-| **E2** | **Rust do browser: eventos e favicon.** Em `browser/panel.rs`, dentro de `with_webview`: `add_SourceChanged` + `add_HistoryChanged` + `add_NavigationCompleted` + `add_DocumentTitleChanged` emitindo `micah:browser-nav {url, title}`, e `ICoreWebView2_15::add_FaviconChanged`/`GetFavicon(PNG)` emitindo `micah:browser-favicon {url, png_base64}`. **Remove o polling de 700 ms** de `useBrowserPanel.ts:419-439`. Tudo atras da feature `browser-panel`; `stub.rs` mantem as assinaturas. Deduplicacao `(url, janela ~1s)` porque SourceChanged e HistoryChanged disparam juntos num pushState. | `cargo test` das funcoes puras de dedupe + `cargo clippy` + log bruto dos eventos numa navegacao SPA real (GitHub) |
-| **E3** | **Browser: rail de favoritos + menu sanduiche.** Store `micah-browser.json` via `tauri-plugin-store` (`bookmarks: [{id,url,title,iconPng}]`, `history: [{url,title,at}]` com teto de N e poda). Rail vertical na borda esquerda do painel, **fora** do host do webview (o HWND pinta por cima de qualquer coisa dentro dele); botao "adicionar pagina atual"; menu de contexto renomear/remover; reordenar. Menu sanduiche (`DropdownMenu`) com `Historico` (lista invertida, clique navega), `Extensoes` (lista as carregadas, botao "carregar pasta descompactada" via plugin dialog) e `Limpar dados`. Webview-filha passa a nascer com `browser_extensions_enabled(true)` + `extensions_path` no app data dir (o painel **ja tem** `data_directory` proprio, `PROFILE_DIR="browser-profile"`, entao nao contamina a UI do app). | vitest das funcoes puras (poda de historico, dedupe de favorito, normalizacao de URL ja existente) + prova no ar: favorito criado aparece com icone e navega; historico lista e navega; extensao descompactada carrega |
-| **E4** | **Modo Editor.** Aba ganha `pane: "workspace" \| "left"` (ausente = `workspace`, para nao invalidar o que ja esta em disco) e o app ganha um segundo id ativo, `leftActiveId`, ao lado de `activeId`. `openFileTab` aceita `options.pane`; `handleOpenFile` e o `onCreated` do `NewEditorDialog` passam `pane: "left"` quando o modo do painel e `editor`. `WorkspaceSurface` passa a receber so as abas `pane !== "left"`; o painel da esquerda em modo `editor` monta `EditorStack` com as abas `pane === "left"` e `leftActiveId`, mais uma faixa compacta de abas com fechar. `serialize.ts` carrega o `pane`; `TabsPanel` marca de qual painel a aba e. Fechar a ultima aba da esquerda deixa um estado vazio explicito, nao um painel morto. | vitest dos planejadores puros (`planFileTabOpen` com `pane`, serializacao ida-e-volta, fechamento) + prova no ar: clique em arquivo abre a esquerda e **o painel central nao ganha aba** |
-| **E5** | **Ai Viewer.** Modulo `left-panel/AiViewer`: fonte de dados unica `useAiActivity()` que funde (a) o agente local (`chatStore.agentMeta` + argumentos de `write_file` em voo, que e de onde `AgentRunBridge` ja tira o conteudo proposto) e (b) cada sessao de agente de terminal viva em `agentStore.sessions`. Uma faixa horizontal por instancia, rotulada, empilhadas; sem instancia ativa, estado vazio explicito. Cada faixa e um CM6 `readOnly` + `editable(false)`, append em lote por `requestAnimationFrame`, doc com teto e corte na mesma transacao, linguagem resolvida pelo caminho do arquivo. **Sem WebGL**, pela razao medida na tabela de pesquisa (o pool de renderers do terminal ja e racionado em 5). | vitest do redutor de atividade (fusao, ordem, teto do buffer) + prova no ar: uma instancia escrevendo aparece ao vivo; duas instancias viram duas faixas; digitar na faixa nao altera nada |
-| **E6** | **Verificacao completa e prova no ar.** `pnpm lint`, `pnpm check-types`, `pnpm test`; `cargo clippy --all-targets --locked -- -D warnings`, `cargo test --locked`, e `cargo check --no-default-features` (prova de rollback, como no card anterior). Fechar o `micah.exe`, `pnpm tauri build --no-bundle`, subir o binario de release e conferir os criterios 1 a 9 com captura de janela do SO (`PrintWindow`, o mesmo caminho de `scripts/validate-browser-panel.mjs`) — o CDP **nao serve** para dirigir a UI do Micah, por decisao do card anterior (criterio 6 de la). Build id lido do ar via `browser_build_id`. | saidas brutas + PNGs em `docs/proof/left-panel/` |
+| **E1** | **Moldura dos tres modos.** Modulo novo `src/modules/left-panel/`: `LeftPanelMode = "browser" \| "editor" \| "ai-viewer"` com array `readonly` unico como fonte da ordem, leitura/escrita persistida em `localStorage` (funcoes puras testadas, espelhando `readBrowserEnabled`; valor desconhecido, vazio ou invalido cai em modo valido — correcao 5), e `LeftPanelSwitcher.tsx` (tres botoes segmentados, `aria-pressed` no ativo). `App.tsx` poe o switcher no slot do Header que hoje recebe `spaceSwitcher`. **O `SpaceSwitcher` continua MONTADO** (correcao 1): o overview vira `Dialog` (sem ancora de popover) e o gatilho vai para o rail da sidebar; `switcherOpen`, `space.overview` e o comando da paleta continuam abrindo, com teste de render que reprova a remocao. **Troca de modo usa `browser_set_visible`, NUNCA `browser_detach`** (correcao 2): detach fecha o webview e apaga `browser-cdp.json` (`panel.rs:299-314`), derrubando os criterios 4, 5 e 11 do card anterior e ressincronizando `set_min_size` 860↔420 a cada clique. Fora do modo `browser`, `syncBounds` para; ao voltar, `syncBounds(force)`. **`browser.enabled` deixa de gatear o painel e passa a gatear o modo `Browser`** (correcao 4): desligada, o item aparece desabilitado com motivo e um modo persistido invalido cai em `editor`. | vitest do modulo (ordem, fallback de valor sujo, teste de render do overview de espacos) + `check-types` + **binario de release** + captura de janela do SO dos tres itens e da troca, mais `scripts/validate-browser-panel.mjs` verde (prova de nao-regressao dos criterios 4/5/7/11 do card anterior) |
+| **E2a** | **Modo Editor, so os planejadores puros** (correcao 17). Aba ganha `pane?: "left"` (ausente = `workspace`, para nao invalidar o que ja esta em disco); o app ganha **`activeByPane: Record<Pane, number>`**, nao um `leftActiveId` solto. Passam a receber/filtrar por `(spaceId, pane)`: `planFileTabOpen` (**incluindo a chave de dedupe e a busca do slot de preview** — sem isso, arquivo ja aberto no centro faz o painel esquerdo mostrar nada, `useTabs.ts:187-264`), `nextActiveInSpace` (`useTabs.ts:295-305`), `pickTabBySpaceIndex` (`useTabs.ts:1109-1117`), `getSwitcherOrder` (`App.tsx:439-467`), o efeito de aquecimento de aba fria (`useTabs.ts:514-521`) e `handleLeafExit`. Persistencia: `SpaceState.activeTabIndexByPane?` e `SerializedTab.pane?` — ambos **opcionais**, para o binario antigo ignorar e o rollback ficar limpo (`spaces/lib/store.ts:16-19`, `serialize.ts:18-27`). Nenhuma fiacao ainda. | vitest dos planejadores, incluindo os casos que o auditor nomeou: arquivo ja aberto no outro painel, slot de preview por painel, ida-e-volta de serializacao com e sem `pane`, guarda do ultimo terminal com editor vivo na esquerda |
+| **E2b** | **Modo Editor, fiacao.** `WorkspaceSurface` recebe so abas `pane !== "left"`; o painel esquerdo em modo `editor` monta `EditorStack` com as abas `pane === "left"` e `activeByPane.left`, com faixa compacta de abas e fechar. `handleOpenFile` e o `onCreated` do `NewEditorDialog` passam `pane: "left"` quando o modo e `editor`. **Atalhos e busca passam a resolver pelo painel COM FOCO** (`focusedPane`, atualizado no `focusin` de cada host), nao pelo `activeId` do workspace — senao `editor.undo/redo/aiComplete/codeComplete` e `Cmd+F` ficam mortos justamente no modo em que se edita codigo (`App.tsx:877-906`, `:944-951`, `:1088-1116`). `TabsPanel` recebe `activeByPane` e um `onSelect(id)` que descobre o painel pela propria aba. Saida do ultimo shell (`App.tsx:1069`) e o boot de espacos (`useSpacesBoot.ts:100-103`) passam a contar so abas do workspace. | vitest + **binario de release**: clique em arquivo abre a esquerda e o centro **nao** ganha aba; Ctrl+Tab, Cmd+1..9, guarda de fechamento, restore de sessao e Cmd+F conferidos (criterio 14) |
+| **E3** | **Rust do browser: eventos e favicon.** Em `panel.rs`, dentro de `with_webview`: `add_SourceChanged` + `add_HistoryChanged` + `add_DocumentTitleChanged` emitindo `micah:browser-nav {url,title}`, e `ICoreWebView2_15::add_FaviconChanged`/`GetFavicon(PNG)` emitindo `micah:browser-favicon`. **Todo cast COM novo e `if let Ok(...)`, nunca `?` no caminho de criacao do webview** (correcao 8): runtime velho degrada, nao derruba o painel. `add_NavigationCompleted` **sai** do conjunto (correcao 8, nota): `SourceChanged` ja cobre documento e fragmento, e IPC sem criterio atras fere a lei de performance do MICAH.md. **O polling de 700 ms NAO e removido** (correcao 6): vira fallback — `panel.rs:391` compila cross-platform e macOS/Linux nao tem esses eventos, entao sem polling a barra de endereco congela la e o criterio 8 do card anterior regride. No Windows o intervalo sobe para 5 s **so depois** de o registro dos handlers confirmar em runtime. Dedupe `(url, ~1s)` para o disparo duplo, **mais throttle de gravacao** (correcao 7): SPA de feed faz `pushState` com URL diferente dezenas de vezes por segundo. | `cargo test` das funcoes puras (dedupe, throttle, redacao de URL) + `cargo clippy` + log bruto de navegacao SPA real |
+| **E4** | **Browser: rail de favoritos + menu sanduiche.** **Dois stores separados** (correcao 14): favoritos em `micah-browser.json`, historico em store proprio com flush por debounce — `tauri-plugin-store` reserializa o arquivo inteiro a cada `set`, e um append por navegacao ao lado de icones base64 reescreveria centenas de KB por pushState. **Favicon vai para disco** (`browser-favicons/<hash>.png`), o store guarda o caminho. **Historico redige credencial** (correcao 13): URL com parametro de credencial na query entra redigida, deny-list no espirito de `ai/lib/security.ts`, com teste unitario — historico em texto puro no app data dir e superficie nova, nao coberta pela nota de ameaca do card anterior. **Ordem do historico e por sequencia monotonica, nao por `at`** (correcao 16): passo de NTP reordena a lista; `at` so exibe, formatado por `Intl.DateTimeFormat`. Rail vertical e menu ficam **fora** do host do webview. Extensoes: `extensions_path` so e passado depois de **validar a pasta em Rust** — cada entrada e diretorio e tem `manifest.json`, o resto vai para quarentena, e zero validas = `None` (correcao 9: `wry-0.55.1/src/webview2/mod.rs:551-556` propaga `?` de cada `AddBrowserExtension`, entao um arquivo solto na pasta **mata o painel inteiro**). Carregar extensao em runtime e via COM cru `ICoreWebView2Profile7::AddBrowserExtension` dentro de `with_webview` (correcao 10: `load_extensions` do wry so roda na criacao), e a **remocao** usa `ICoreWebView2BrowserExtensionList` (correcao 11: a extensao grava no perfil e nao sai tirando o `extensions_path`; apagar o perfil derrubaria o criterio 7 do card anterior). "Limpar dados" e escopado ao perfil do painel e nomeia o que sera perdido (correcao 15). Nota de ameaca do card anterior **estendida** para extensoes, com confirmacao explicita nomeando a pasta (correcao 12). | vitest das funcoes puras (poda, redacao, dedupe) + `cargo test` da validacao da pasta + prova no ar: favorito com icone navega; historico lista e navega; extensao descompactada carrega; pasta invalida **nao** derruba o painel |
+| **E5** | **Ai Viewer.** **O `AgentRunBridge` (assinante unico do `useChat`) publica** num store leve `{toolCallId, path, chunk}`; o Ai Viewer assina **esse** store (correcao 20): montar um segundo assinante de `messages` re-renderiza a cada token, e o proprio codigo ja avisa que essa rota e a mais cara (`AgentRunBridge.tsx:137-139`). A fonte do conteudo e a parte `tool-write_file` em `state: "input-streaming"` com `input.content` parcial, chaveada por **`toolCallId`** — nao por `approval.id`, que so existe em `approval-requested`, quando o input **ja esta completo** (`AgentRunBridge.tsx:187`, `ai@6.0.207` `index.d.ts:1723-1745`) (correcao 18). `edit`/`multi_edit` mostram o par velho/novo, nao arquivo reconstruido. Agente de terminal mostra o **buffer do terminal** via `live.readLeafBuffer` (`chatStore.ts:40`), rotulado como tal — `AgentSession` (`agents/lib/types.ts:12-26`) nao tem arquivo nem conteudo. Uma faixa horizontal por instancia, rotulada; sem instancia, estado vazio explicito. Cada faixa e CM6 `readOnly(true)` **e** `editable(false)`, append em lote por `requestAnimationFrame`, doc com teto e corte na mesma transacao. **Sem WebGL** (`rendererPool.ts:31` raciona contextos em 5). | vitest do redutor (fusao, ordem, teto) + prova no ar: streaming parcial aparece ao vivo; duas instancias viram duas faixas; digitar na faixa nao altera nada |
+| **E6** | **Verificacao completa e prova no ar, com trilha de ACIONAMENTO** (correcao 21). Captura de janela e passiva: fotografa, nao clica; e o CDP nao alcanca a UI do Micah por construcao (so o webview-filho recebe `additional_browser_args`, `panel.rs:212-224`). Entao os criterios 2, 4, 5, 6, 7, 8 e 9 ganham acionamento por **extensao de debug do `useControlBridge`** (ja existe, ja e IPC do CLI para a UI: `control/useControlBridge.ts:119-161` + `src-tauri/src/modules/control.rs`) com metodos de introspecao/acionamento, e por `SendInput` via PowerShell (mesmo caminho de P/Invoke de `scripts/window-shot.ps1`) onde for clique de verdade. Mais `pnpm lint`, `check-types`, `test`; `cargo clippy --all-targets --locked -- -D warnings`, `cargo test --locked`, `cargo check --no-default-features` (rollback). Build id lido do ar via `browser_build_id`. | saidas brutas + PNGs em `docs/proof/left-panel/`, um artefato por criterio |
 | **E7** | Registro no `memorium.yaml` com bloco `prova` (build id lido do ar) e `achados` por categoria; aviso no WhatsApp pelo Cavalo Manutencao. | entrada YAML + envio |
 
 ### Riscos conhecidos, tratados como etapa e nao como nota de rodape
 
-1. **HWND por cima do DOM**: qualquer coisa desenhada dentro do host do browser fica
-   invisivel. O rail de favoritos e o menu ficam **fora** do host (E3), e a troca de modo
-   **detacha** o webview (E1), nao apenas o esconde com CSS.
-2. **Espacos**: tirar o `SpaceSwitcher` do header nao pode deixar o recurso inalcancavel
-   nem quebrar a persistencia por espaco. E1 mantem atalho e paleta, e a suite de testes
-   de espacos tem de continuar verde.
-3. **Largura do painel**: o card anterior deixou em aberto que o painel nasce largo demais
-   (`react-resizable-panels` nao resolve pixel no primeiro commit). E1 nao piora isso, e E6
-   mede em binario de release, sem HMR, que era exatamente o que faltava para fechar la.
-4. **`pane` nas abas** (E4) toca `useTabs`, que e o coracao do app. Toda a logica nova
-   entra em planejadores **puros e testados**; o hook so orquestra.
-5. **Extensoes** exigem que o webview do painel tenha data dir proprio (ja tem) e que a
-   configuracao de extensoes seja identica em toda webview que compartilhe o dir; a UI do
-   app **nao** liga extensoes.
+1. **HWND por cima do DOM**: nada renderiza dentro do host do webview. Rail e menu ficam
+   **fora** dele (E4), e a troca de modo usa `browser_set_visible` — o mesmo mecanismo que
+   ja passou no criterio 13 do card anterior com PNG anexo.
+2. **Espacos**: o `SpaceSwitcher` **nao sai do app**, so sai do canto. Ele e o unico
+   consumidor de `handleDeleteSpace`, `handleMoveTab`, `handleReorderTab`,
+   `handleNewTabInSpace` e `onReorderSpaces` (`App.tsx:1133-1197`); removido, esses
+   caminhos e `removeTabsForSpace` viram codigo morto.
+3. **Largura do painel**: o card anterior deixou em aberto que o painel nasce largo demais.
+   E1 fecha em release, sem HMR — que e exatamente o que faltava la.
+4. **`pane` nas abas** toca `useTabs`, o coracao do app: por isso virou E2a (planejadores
+   puros e testados) + E2b (fiacao), com os 13 consumidores nomeados um a um.
+5. **Extensoes** sao codigo arbitrario com acesso a todas as sessoes logadas do painel,
+   que tem porta CDP aberta. Validacao de pasta, confirmacao nomeada, caminho de remocao
+   e nota de ameaca estendida entram como entrega de E4, nao como aviso.
+6. **Concorrencia na troca de modo**: com `set_visible` no lugar do detach, some a janela
+   em que um `browser_attach` em voo (segundos, `useBrowserPanel.ts:284-308`) concluia
+   depois de um detach e deixava webview orfa pintando por cima do editor.
 
 ## Auditorias por etapa
 
-<a preencher>
+### Auditoria do plano (etapa 4 do protocolo) — Opus, 2026-08-14
+
+**Veredito: aprovado com correcoes.** 24 correcoes obrigatorias, **12/12 categorias com
+achado** (diferente do card anterior, este toca data e encoding, entao nenhuma linha ficou
+"fora de escopo"). **As 24 foram aceitas; nenhuma recusada.** Duas eram regressao direta
+contra criterios ja entregues e provados no card anterior.
+
+| # | Categoria | Etapa | Achado | Evidencia | Correcao aplicada |
+|---|-----------|-------|--------|-----------|-------------------|
+| 1 | Regressao / Autorizacao | E1 | "Espacos continuam pela paleta e pelo atalho" e **falso**: o `SpaceSwitcher` e um `Popover` ancorado no gatilho do header e o unico consumidor de criar/renomear/deletar/reordenar espaco, mover aba entre espacos, new-tab-in-space e jump-to-tab | `SpaceSwitcher.tsx:239-256`; unico render em `App.tsx:1186`; `App.tsx:1133-1197`; `removeTabsForSpace` `useTabs.ts:616` | overview vira `Dialog`, gatilho vai para o rail da sidebar, componente segue montado; teste de render reprova a remocao; criterio 12 novo |
+| 2 | Regressao (contra card entregue) | E1 | `browser_detach` na troca de modo **fecha o webview e apaga `browser-cdp.json`**, derrubando os criterios 4, 5 e 11 do card anterior; volta custa ate 8 s de probe com **porta nova**, e `set_min_size` alterna 860↔420 redimensionando a janela do SO a cada clique | `panel.rs:299-314`, `mod.rs:59`, `panel.rs:39`, `panel.rs:238/305` | trocar de modo usa `browser_set_visible` (`panel.rs:337-347`), o mesmo mecanismo aprovado no criterio 13 daquele card; `syncBounds` para fora do modo e volta com `force` |
+| 3 | Concorrencia | E1 | Trocar de modo durante `browser_attach` em voo: o detach nao acha o label, nada fecha, o attach conclui depois e a webview fica orfa por cima do editor | `useBrowserPanel.ts:284-308` vs `panel.rs:304` | some com a correcao 2; se algum detach permanecer, epoch/generation no `BrowserState` |
+| 4 | Estado e persistencia | E1 | Relacao `browser.enabled` × `mode` indefinida: `enabled=false` + `mode="browser"` = painel sem webview e sem sinal; e o criterio 14 do card anterior deixa de valer se o painel passa a existir sempre | `App.tsx:1377` | `browser.enabled` passa a gatear o **modo**, nao o painel; item desabilitado com motivo; modo invalido cai em `editor` |
+| 5 | Entrada vazia ou suja | E1 | "Espelhando `readBrowserEnabled`" nao define o que fazer com valor persistido corrompido | `useBrowserPanel.ts:92-97` | fallback explicito e testado em vitest |
+| 6 | Regressao / Falha externa | E3 | Remover o polling quebra a barra de endereco em macOS/Linux: `SourceChanged`/`HistoryChanged` sao API do WebView2, mas `panel.rs` e `browser_url` compilam cross-platform; e o polling e o unico caminho que grava `micah.browser.url` para o restore | `panel.rs:114/212/391`, `useBrowserPanel.ts:428` | polling vira **fallback**; no Windows sobe para 5 s so apos confirmar o registro dos handlers em runtime |
+| 7 | Limite de taxa e cota | E3 | Dedupe `(url, ~1s)` cobre o disparo duplo, nao a **rajada** de `pushState` com URL diferente (feed infinito, mapa) | doc do `SourceChanged` | throttle de gravacao (>=1/s), teto rigido, coalescencia por URL consecutiva |
+| 8 | Falha externa | E3 | `?` no cast `ICoreWebView2_15` propaga e mata a criacao do webview em runtime velho; `add_NavigationCompleted` e IPC redundante para URL | — | todo cast COM novo e `if let Ok(...)`; `NavigationCompleted` sai do conjunto |
+| 9 | Entrada suja / Falha externa | E4 | `extensions_path` mal-formado **mata o painel inteiro**: `load_extensions` roda dentro da criacao e propaga `?` de cada `AddBrowserExtension`; um arquivo solto, uma pasta sem `manifest.json` ou runtime < 1.0.2210.55 derrubam os criterios 3-8 do card anterior | `wry-0.55.1/src/webview2/mod.rs:551-556` e `~:1353-1367` | validacao da pasta em Rust antes de passar o caminho; zero validas = `None`; teste unitario |
+| 10 | Regressao | E4 | "Carregar pasta descompactada" nao funciona: `load_extensions` roda **uma vez**, na criacao | mesmo arquivo | add em runtime via COM cru `ICoreWebView2Profile7::AddBrowserExtension` dentro de `with_webview` |
+| 11 | Rollback | E4 | Extensao instalada grava no **perfil** e nao sai retirando `extensions_path`; apagar o perfil derrubaria o criterio 7 do card anterior (logins) | — | caminho de remocao via `ICoreWebView2BrowserExtensionList` escrito na etapa |
+| 12 | Autorizacao | E4 | Extensao descompactada e codigo arbitrario sobre todas as sessoes logadas de um painel com porta CDP aberta; a etapa nao estendia a nota de ameaca do card anterior | card anterior, E5.5 | nota estendida + confirmacao explicita nomeando a pasta |
+| 13 | Segredo em claro | E4 | Historico em texto puro no app data dir inclui URL com token na query (callback OAuth, magic link, reset de senha) — superficie nova | — | redacao por deny-list de parametros, teste unitario, criterio 15 novo |
+| 14 | Encoding / Volume | E4 | Icone base64 no mesmo JSON que recebe um append por navegacao: `tauri-plugin-store` reserializa o arquivo inteiro a cada `set` | — | favicon vai para disco, store guarda caminho; historico em store separado com debounce |
+| 15 | Regressao | E4 | "Limpar dados" sem escopo apaga o `localStorage` da UI (largura, flag, URL e o modo novo) ou os logins do criterio 7 | `useBrowserPanel.ts:28-30` | escopo explicito + confirmacao nomeando o que sera perdido |
+| 16 | Timezone e data | E4 | Ordenar historico por `at` reordena com passo de NTP ou relogio manual | — | ordem por sequencia monotonica; `at` so exibe, via `Intl.DateTimeFormat` |
+| 17 | Regressao (bloqueia) | E2 | `pane` + `leftActiveId` quebra **13 consumidores**, com o pior deles silencioso: `planFileTabOpen` dedupe por `(kind, spaceId, path)` **sem pane**, entao arquivo ja aberto no centro faz o painel esquerdo mostrar **nada** e o criterio 6 falha calado. Tambem: slot de preview, aquecimento de aba fria (painel esquerdo nasce vazio a cada restart), guarda de fechamento, saida do ultimo shell, boot de espacos, `SpaceState.activeTabIndex` singular, `SerializedTab` sem `pane`, `replaceTabs` com um id so, Ctrl+Tab/MRU, Cmd+1..9, atalhos de editor mortos, `searchTarget` cego, `TabsPanel` com um ativo so | `useTabs.ts:187-264`, `:246-263`, `:514-521`, `:295-305`, `:1109-1117`; `EditorStack.tsx:24-26`; `useTabCloseGuards.ts:26`; `App.tsx:1069`, `:439-467`, `:852-856`, `:877-906`, `:944-951`, `:1088-1116`, `:1489-1493`; `useSpacesBoot.ts:100-103`, `:117`; `useSpacePersistence.ts:50-70`; `spaces/lib/store.ts:16-19`; `serialize.ts:18-27` | `activeByPane: Record<Pane, number>` no lugar do id solto; todos os planejadores passam a filtrar por `(spaceId, pane)`; `pane` entra na chave de dedupe e no slot de preview; campos de persistencia **opcionais**; atalhos e busca resolvem por `focusedPane`; etapa dividida em E2a (puro) + E2b (fiacao); criterio 14 novo |
+| 18 | Falha externa / Verificabilidade | E5 | O criterio 8 original era **insatisfazivel**: `AgentSession` nao tem arquivo nem conteudo; `agentMeta` nao tem `path` nem `content`; e o conteudo do `write_file` nao esta no `chatStore` nem "em voo" — a bridge faz `if (!approvalId) continue`, e `approval` so existe em `approval-requested`, onde o input **ja esta completo** | `agents/lib/types.ts:12-26`; `chatStore.ts:50-60`, `:144`, `:40`; `AgentRunBridge.tsx:187`, `:270-325`; `ai@6.0.207 index.d.ts:1723-1745` | criterio 8 reescrito: streaming real vem de `state: "input-streaming"` chaveado por `toolCallId`; `edit`/`multi_edit` mostram o par; agente de terminal mostra o buffer do terminal |
+| 19 | Verificabilidade | E5 | Criterio 9 inatingivel como escrito: o agente local tem **uma** sessao ativa e sub-agentes nao tem store nem stream proprio | `chatStore.ts:144`, `AgentRunBridge.tsx:41-44`, `ai/agents/runSubagent.ts` | criterio 9 reescrito para "agente local + agentes de terminal, ou dois de terminal" |
+| 20 | Limite de taxa | E5 | Um segundo assinante de `messages` re-renderiza a cada token; o proprio codigo diz que essa e a rota mais cara | `AgentRunBridge.tsx:137-139` | o `AgentRunBridge` publica num store leve; o viewer assina o store |
+| 21 | Verificabilidade | E6 | Captura de janela **fotografa, nao clica**, e o CDP nao alcanca a UI do Micah por construcao — 7 dos 11 criterios ficavam improvaveis ("eu olhei e estava certo") | `scripts/window-shot.ps1`, `panel.rs:212-224` | trilha de acionamento: extensao de debug do `useControlBridge` (`control/useControlBridge.ts:119-161`) + `SendInput` por P/Invoke |
+| 22 | Rollback / Ordem | E6 | Prova em release so no fim repete a falha do card anterior, cujos criterios 1 e 2 nao fecharam **porque a validacao rodou em debug com HMR** | card anterior, secao *Por que nao foi possivel fechar agora* | E1 e E2b fecham em binario de release, cada um com sua prova |
+| 23 | Ordem | — | E2 (modo Editor) tem o maior raio de dano e estava agendada em 4o; E3/E4 seriam construidas sobre um app ainda por operar no coracao | achado 17 | ordem virou E1 → E2a → E2b → E3 → E4 → E5 → E6 → E7 |
+| 24 | Verificabilidade | crit. 1 | "essa ordem nao muda em nenhum estado" e quantificacao universal infalsificavel | — | vira array `readonly` fixado por teste unitario + teste de render da ordem no DOM |
+
+**O que o auditor conferiu e CONFIRMOU** (nao regastar tempo): baseline `tauri 2.11.5` /
+`wry 0.55.1` / `webview2-com 0.38.2` / `windows 0.61.3` no `Cargo.lock`; `wry` expoe
+`with_browser_extensions_enabled` e `with_extensions_path` (`lib.rs:1769/1774`); Tauri expoe
+os equivalentes (`webview/mod.rs:1063/1075`); `wry` **nao** expoe favicon (zero ocorrencia em
+`wry-0.55.1/src/webview2/`); `webview2-com 0.38.2` traz os quatro handlers
+(`callback.rs:199/213/328/539`); **`SourceChanged` pega `pushState`** com URL diferente (doc
+da Microsoft; so o pushState para a *mesma* URL escapa, e ai a URL nao mudou) — era o ponto
+mais provavel de o plano estar errado e estava certo; `with_webview` funciona em webview-filha
+(`webview/mod.rs:1668`); CM6 read-only sobre xterm+WebGL esta **certo** (`rendererPool.ts:31`,
+`readOnly` e `editable` sao Facets); `scripts/validate-browser-panel.mjs` e `window-shot.ps1`
+existem e capturam em nivel de SO (`PrintWindow` + `PW_RENDERFULLCONTENT`, recusa PNG < 5 KB);
+toda a tabela *Levantamento do sistema atual* bate linha a linha; `react-resizable-panels`
+v4.12.2 e a API usada e a real; os tres scripts do criterio 10 existem (o card **nao** repetiu
+o erro do `pnpm typecheck` do card anterior).
+
+**Suspeitas do proprio auditor que ele investigou e DERRUBOU** (registradas porque achado
+inventado custa o mesmo que achado perdido): (a) `localStorage` nao sobreviveria a janela de
+Settings — falso, `open_settings_window` (`lib.rs:101`) nao passa `data_directory` nem
+`additional_browser_args`, entao Settings e janela principal compartilham `EBWebView` e origem;
+so o painel tem perfil proprio; (b) `useWorkspaceCwd` quebraria — falso, ela deriva de abas
+**terminal** e ja ignora editor; (c) `editorRefs`/`previewRefs` colidiriam — falso, sao mapas
+por id de aba e uma aba vive num painel so; o problema real e **quem le** o mapa; (d) registro
+de sessoes do LSP quebraria — falso, chaveia por `(server, workspace root)` com refcount;
+(e) extensoes exigiriam `.crx` ou loja — falso, o plano acertou ao dizer pasta descompactada.
+
+### Auditoria da implementacao de E1 (executor, com prova no ar) — 2026-08-14
+
+**Estado: E1 entregue e provado em binario de release, com um item herdado em
+aberto.** Todas as capturas sao de nivel de SO (`PrintWindow`), do binario
+`src-tauri/target/release/micah.exe`, sem dev server e sem HMR. Provas em
+`docs/proof/left-panel/`.
+
+| Criterio | Veredito | Prova |
+|----------|----------|-------|
+| 1 (sem "Default"; tres itens na ordem) | **aprovado** | `e1-01-browser.png` (canto superior esquerdo) + `e1-10-cluster.png` (o cluster da direita nao tem mais o texto "Default", so o avatar do espaco) + teste unitario da ordem do array |
+| 2 (clicar troca o painel, ativo marcado) | **aprovado** | cliques reais por `SendInput`: `e1-02-editor.png`, `e1-03-ai-viewer.png`, `calib-a.png` |
+| 3 (modo sobrevive ao restart) | **aprovado** | `e1-04-restart-keeps-editor.png`: app fechado e reaberto, `Editor` continua ativo |
+| 12 (espacos alcancaveis e inteiros) | **aprovado** | `e1-12-spaces-popover.png`: overview abre pelo avatar no cluster, com lista, abas, "New space" e o atalho `Ctrl Shift S` |
+| 13 (sem regressao contra o card anterior) | **aprovado** | `e1-16-roundtrip.png`: ida e volta `Browser -> Editor -> Browser` devolve a **mesma pagina logada**, sem recarregar. `browser_set_visible` no lugar de `browser_detach` fez o que a correcao 2 previa |
+| 10 (checagens) | **parcial** | `pnpm check-types` limpo, `pnpm test` 745/745 verde, biome sem achado novo nos arquivos tocados. Rust ainda nao rodado nesta etapa |
+
+**Achados do executor durante E1, todos corrigidos e re-provados:**
+
+| # | Categoria | Achado | Evidencia | Correcao |
+|---|-----------|--------|-----------|----------|
+| E1-1 | Falha externa / Verificabilidade | `scripts/window-shot.ps1` capturava **um recorte do canto superior esquerdo** da janela e reportava sucesso: o host PowerShell e DPI-unaware, entao `GetWindowRect` responde em pixels logicos enquanto `PrintWindow` pinta em fisicos. Num monitor a 150% sumia o terco direito da janela, ou seja **todo o cluster do header**, e a captura passava como completa. Isso contamina retroativamente as provas do card anterior | captura reportando 2575x1392 para uma janela de 3862x2110 | `SetProcessDPIAware()` no script; a captura passou a bater 1:1 com os pixels |
+| E1-2 | Verificabilidade | Captura de tela nao clica. Sem trilha de acionamento, os criterios 2 a 9 nao eram falsificaveis (correcao 21 do auditor) | — | `scripts/window-click.ps1` e `scripts/window-key.ps1` novos, por `SendInput`/`keybd_event`, com o mesmo `SetProcessDPIAware` (sem ele um clique mirado em `Editor` cai em `Ai Viewer` e o run reporta sucesso) |
+| E1-3 | Regressao (bloqueia) | Esconder a superficie do browser com `display: none` **matava o painel**: o host deixa de ter caixa, `measure()` devolve nulo, as 8 tentativas de attach se esgotam e o webview nunca mais e anexado. Bootar em modo `Editor` e depois ir para `Browser` dava barra de endereco preenchida e **pagina em branco** | `e1-13-back-to-browser.png` | a superficie do browser passou a esconder com `invisible` (mantem layout, mantem medida) e `visible` volta a zerar o contador de tentativas |
+| E1-4 | Estado e persistencia | Um **clique** no divisor contava como arrasto: `suppress("handle-drag")` marcava `draggingRef` no `pointerdown`, e a passagem de layout seguinte gravava a largura corrente. Foi assim que a largura errada virou a largura salva no meio desta propria sessao | `useBrowserPanel.ts` (`suppress`) | so movimento com o ponteiro pressionado conta como arrasto; chave de largura para `v5`, porque nenhum dos dois consertos cura valor ja gravado em disco |
+
+**Item herdado que continua em aberto (nao e regressao desta etapa):** o painel
+esquerdo **nasce largo demais** e cresce ate `BROWSER_MAX_WIDTH`. Isto e o mesmo
+que o card anterior deixou aberto nos criterios 1 e 2 dele, e agora esta medido
+**em binario de release, sem HMR** — que era exatamente o que faltava la. O que
+esta etapa acrescentou de diagnostico: (a) nao e valor envenenado no
+`localStorage`, porque acontece com a chave nova e vazia; (b) nao e o
+`defaultSize` percentual do painel de workspace, porque remove-lo nao mudou o
+sintoma (mudanca revertida por nao estar provada); (c) o laco que reaplica a
+largura por `requestAnimationFrame` roda e nao consegue segurar o valor. A
+proxima tentativa tem de ser sobre a semantica de tamanhos mistos px/% do
+`react-resizable-panels` v4, com um caso reduzido, e nao mais por tentativa.
 
 ## Validacao independente
 

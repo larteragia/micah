@@ -36,6 +36,13 @@ export const OVERLAY_SOURCES = [
   "layout",
   /** The user turned the feature off. */
   "disabled",
+  /**
+   * The left panel is showing Editor or Ai Viewer instead of the browser.
+   * Hiding beats detaching: `browser_detach` closes the webview and clears the
+   * CDP discovery file, which would drop every attached Playwright client and
+   * lose the page's session on every click of the mode switcher.
+   */
+  "mode",
 ] as const;
 
 export type OverlaySource = (typeof OVERLAY_SOURCES)[number];
@@ -119,6 +126,7 @@ export const CODE_DRIVEN_SOURCES: readonly OverlaySource[] = [
   "handle-drag",
   "layout",
   "disabled",
+  "mode",
 ];
 
 export type OverlayRect = {

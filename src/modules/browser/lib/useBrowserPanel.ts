@@ -25,7 +25,16 @@ export const BROWSER_MIN_WIDTH = 320;
 export const BROWSER_MAX_WIDTH = 1600;
 export const BROWSER_HOME = "https://search.brave.com";
 
-const WIDTH_KEY = "micah.browser.width.v3";
+/**
+ * v5 discards every width written before the two ways this value could be
+ * poisoned were closed. First the layout feedback loop, which persisted the
+ * result of a bad initial layout on every non-interactive pass until the stored
+ * width sat at `BROWSER_MAX_WIDTH`. Then the one that survived it: a plain click
+ * on the divider counted as a drag, so the click alone committed whatever width
+ * the panel happened to have. Neither fix can heal a value already on disk, so
+ * the key version is the migration.
+ */
+const WIDTH_KEY = "micah.browser.width.v5";
 const ENABLED_KEY = "micah.browser.enabled";
 const URL_KEY = "micah.browser.url";
 /** Reading back the webview's own URL is the only thing that catches pushState. */
@@ -137,7 +146,30 @@ function measure(host: HTMLElement): Bounds | null {
   return rectToBounds(rect, scale);
 }
 
-export function useBrowserPanel() {
+type Options = {
+  /**
+   * Whether the left panel that hosts this surface is on screen at all. The
+   * width has to be asserted whenever the panel exists, including in the modes
+   * that do not show the browser, or the panel resolves to no size and becomes
+   * the elastic one.
+   */
+  mounted?: boolean;
+  /**
+   * Whether the panel's surface is the one currently on screen. False while the
+   * left panel shows another mode, or while it is closed.
+   *
+   * This hides the webview, it does not detach it: detaching closes the child
+   * webview and clears the CDP discovery file, so a Playwright client attached
+   * to the panel would be dropped and the page's session lost every time the
+   * user clicks another mode.
+   */
+  visible?: boolean;
+};
+
+export function useBrowserPanel({
+  mounted = true,
+  visible = true,
+}: Options = {}) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const panelRef = useRef<PanelImperativeHandle | null>(null);
   const [enabled, setEnabledState] = useState(readBrowserEnabled);
@@ -153,9 +185,22 @@ export function useBrowserPanel() {
 
   const widthRef = useRef(readBrowserWidth());
   // Computed once: re-deriving it on every render would fight the user's drag.
-  const [initialSize] = useState(() =>
+  const [firstSize] = useState(() =>
     initialBrowserPercent(widthRef.current, window.innerWidth),
   );
+  const everMountedRef = useRef(false);
+  // The percentage is a workaround for one specific moment: the very first
+  // commit, when the group has not measured itself and a pixel size resolves to
+  // nothing. On a later mount, closing and reopening the panel, the group is
+  // already measured and the percentage is the wrong unit: it was derived from
+  // the window width at startup and comes back as the wrong number of pixels.
+  const initialSize = everMountedRef.current
+    ? `${widthRef.current}px`
+    : firstSize;
+
+  useEffect(() => {
+    if (mounted) everMountedRef.current = true;
+  }, [mounted]);
   const widthTimerRef = useRef(0);
   const lastBoundsRef = useRef<Bounds | null>(null);
   const lastUrlRef = useRef(url);
@@ -164,9 +209,14 @@ export function useBrowserPanel() {
   const attachingRef = useRef(false);
   const suppressedRef = useRef(false);
   const draggingRef = useRef(false);
+  const pointerDownRef = useRef(false);
 
   const suppress = useCallback((source: OverlaySource) => {
-    if (source === "handle-drag") draggingRef.current = true;
+    // Pressing the handle is not yet a drag. Persisting on pointerdown alone
+    // means a plain click on the divider commits whatever width the panel
+    // happens to have, which is how a bad layout used to become the stored one
+    // and come back wider on every launch.
+    if (source === "handle-drag") pointerDownRef.current = true;
     dispatchSuppression({ type: "suppress", source });
   }, []);
   const release = useCallback((source: OverlaySource) => {
@@ -202,7 +252,7 @@ export function useBrowserPanel() {
   // then *verified*, retrying until the group answers with the size we asked
   // for. Anything less is a panel that is usually, but not always, right.
   useEffect(() => {
-    if (!enabled) return;
+    if (!mounted) return;
     let frame = 0;
     let attempts = 0;
     const apply = () => {
@@ -222,12 +272,24 @@ export function useBrowserPanel() {
     // `attached` is here because the panel is re-created on remount, and a panel
     // that came back at the wrong width is the same bug as one that started at
     // the wrong width.
-  }, [enabled, attached]);
+  }, [mounted, attached]);
 
   const retry = useCallback(() => {
     setError(null);
     setAttempt(0);
   }, []);
+
+  useEffect(() => {
+    dispatchSuppression({
+      type: visible ? "release" : "suppress",
+      source: "mode",
+    });
+    // Coming back into view is a fresh chance to attach. Without this an attach
+    // that exhausted its retries while the panel was showing another mode would
+    // never be tried again, and the browser would stay blank until the app is
+    // restarted into browser mode.
+    if (visible) setAttempt(0);
+  }, [visible]);
 
   /** Move the native webview onto the placeholder. */
   const syncBounds = useCallback(async (force = false) => {
@@ -395,8 +457,14 @@ export function useBrowserPanel() {
   // The divider suppresses on pointerdown; releasing has to be global because
   // the gesture routinely ends outside the handle (and outside the window).
   useEffect(() => {
-    if (!enabled) return;
+    if (!mounted) return;
+    // Only movement while the handle is held counts as a drag, so a stray click
+    // on the divider cannot commit a width.
+    const move = () => {
+      if (pointerDownRef.current) draggingRef.current = true;
+    };
     const end = () => {
+      pointerDownRef.current = false;
       release("handle-drag");
       // Cleared a beat later: the group's final layout event lands after the
       // pointer is already up, and that one is the size worth keeping.
@@ -404,15 +472,17 @@ export function useBrowserPanel() {
         draggingRef.current = false;
       }, 250);
     };
+    window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", end);
     window.addEventListener("pointercancel", end);
     window.addEventListener("blur", end);
     return () => {
+      window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", end);
       window.removeEventListener("pointercancel", end);
       window.removeEventListener("blur", end);
     };
-  }, [enabled, release]);
+  }, [mounted, release]);
 
   // The address bar reads the webview, because `pushState` fires no navigation
   // event and every SPA the panel is meant for navigates that way.

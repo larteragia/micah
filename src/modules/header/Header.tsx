@@ -24,12 +24,13 @@ import {
 
 type Props = {
   onToggleSidebar: () => void;
-  onToggleBrowser: () => void;
-  browserEnabled: boolean;
+  onToggleLeftPanel: () => void;
+  leftPanelOpen: boolean;
   onOpenCommandPalette: () => void;
   onActivateAgent: (tabId: number, leafId: number) => void;
   onActivateLocalAgent: () => void;
   onOpenSettings: () => void;
+  leftPanelSwitcher: ReactNode;
   spaceSwitcher: ReactNode;
   searchTarget: SearchTarget;
   searchRef: RefObject<SearchInlineHandle | null>;
@@ -39,12 +40,13 @@ const COMPACT_WIDTH = 720;
 
 export function Header({
   onToggleSidebar,
-  onToggleBrowser,
-  browserEnabled,
+  onToggleLeftPanel,
+  leftPanelOpen,
   onOpenCommandPalette,
   onActivateAgent,
   onActivateLocalAgent,
   onOpenSettings,
+  leftPanelSwitcher,
   spaceSwitcher,
   searchTarget,
   searchRef,
@@ -75,22 +77,24 @@ export function Header({
     </Button>
   );
 
-  // Browser toggle, bell, command palette and sidebar toggle sit on the right
-  // next to the settings gear, mirrored so the sidebar toggle lands closest to
-  // it. The browser panel docks on the left, so its toggle mirrors the sidebar
-  // one — same button, icon pointing the other way.
+  // Left-panel toggle, spaces, bell, command palette and sidebar toggle sit on
+  // the right next to the settings gear, mirrored so the sidebar toggle lands
+  // closest to it. The left panel docks opposite the sidebar, so its toggle
+  // mirrors the sidebar one: same button, icon pointing the other way.
   const controlCluster = (
     <div className="flex shrink-0 items-center gap-0.5">
       <Button
-        onClick={onToggleBrowser}
-        title={browserEnabled ? "Hide browser panel" : "Show browser panel"}
-        aria-pressed={browserEnabled}
+        onClick={onToggleLeftPanel}
+        title={leftPanelOpen ? "Hide left panel" : "Show left panel"}
+        aria-pressed={leftPanelOpen}
         variant="ghost"
         size="icon-sm"
         className="shrink-0 rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
       >
         <HugeiconsIcon icon={SidebarLeftIcon} size={18} strokeWidth={1.75} />
       </Button>
+
+      {spaceSwitcher}
 
       <NotificationBell
         onActivate={onActivateAgent}
@@ -127,13 +131,14 @@ export function Header({
         IS_MAC ? "pr-2 pl-20" : "pr-0 pl-2"
       }`}
     >
-      {/* Tabs live in the sidebar's Tabs panel; the header only keeps the
-          space switcher and leaves the rest as window drag surface. */}
+      {/* Tabs live in the sidebar's Tabs panel; the top-left corner belongs to
+          the left panel's mode switcher and the rest stays window drag surface.
+          Spaces moved into the control cluster on the right. */}
       <div
         className="flex min-w-0 flex-1 items-center gap-2"
         data-tauri-drag-region
       >
-        {spaceSwitcher}
+        {leftPanelSwitcher}
         <div data-tauri-drag-region className="h-full min-w-2 flex-1" />
       </div>
 

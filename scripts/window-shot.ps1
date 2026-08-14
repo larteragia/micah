@@ -40,9 +40,17 @@ public static class Win32Shot {
   [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hwnd, out RECT r);
   [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hwnd);
   [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hwnd);
+  [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
   [StructLayout(LayoutKind.Sequential)] public struct RECT { public int Left, Top, Right, Bottom; }
 }
 "@
+
+# Without this the PowerShell host is DPI-unaware, so GetWindowRect answers in
+# virtualized (logical) pixels while PrintWindow paints in physical ones. The
+# capture then silently comes back as a top-left crop of the window: on a 150%
+# display the whole right third, header controls included, is simply missing and
+# the run still reports a full-size screenshot.
+[void][Win32Shot]::SetProcessDPIAware()
 
 $procs = Get-Process -Name $ProcessName -ErrorAction SilentlyContinue |
   Where-Object { $_.MainWindowHandle -ne 0 }
