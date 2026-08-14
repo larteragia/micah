@@ -1,0 +1,23 @@
+# Memória permanente do projeto Micah (fork do Micah).
+# LEI: nada entra aqui sem o bloco `prova` — identificador de artefato lido DO AR.
+# Fonte da telemetria de achados (seção 4.1 do Quadro de Cards).
+
+projeto:
+  nome: Micah
+  origem: fork de larteragia/micah
+  caminho: C:\Users\Zigfriad\projetos\micah
+  runtime: Tauri v2 + wry (WebView2 no Windows) + React 19 + xterm
+  producao: |
+    App desktop. "No ar" = o binário src-tauri/target/release/micah.exe
+    reconstruído e em execução, reportando o mesmo build id publicado.
+  build:
+    frontend: pnpm build
+    binario: pnpm tauri build  (ou cargo build --release em src-tauri)
+    trava: o build falha enquanto micah.exe estiver em execução (arquivo em uso)
+  leis_do_projeto:
+    - OpenRouter é banido; provider padrão é claude-code (sem chave, plano fixo)
+    - Smart App Control do Windows precisa ficar desligado para o binário rodar
+    - sidebar de arquivos fica à DIREITA
+    - as abas vivem no painel Tabs da sidebar, não em barra no topo da janela
+
+rondas_pdi: []
