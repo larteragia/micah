@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  findLeafResume,
   firstLeafSlotId,
   leafIds,
+  setLeafResume,
   swapLeafInDirection,
   type PaneNode,
 } from "@/modules/terminal/lib/panes";
@@ -23,6 +25,35 @@ function col(...ids: number[]): PaneNode {
     children: ids.map((id) => ({ kind: "leaf", id })),
   };
 }
+
+describe("setLeafResume", () => {
+  const UUID = "3f8a1c2e-9b4d-4f6a-8e2c-1a5d7b9c0e42";
+
+  it("anchors, reads back and clears on a nested tree", () => {
+    const tree: PaneNode = {
+      kind: "split",
+      id: 100,
+      dir: "row",
+      children: [{ kind: "leaf", id: 1 }, col(2, 3)],
+    };
+    const anchored = setLeafResume(tree, 3, UUID);
+    expect(findLeafResume(anchored, 3)).toBe(UUID);
+    expect(findLeafResume(anchored, 1)).toBeUndefined();
+    const cleared = setLeafResume(anchored, 3, null);
+    expect(findLeafResume(cleared, 3)).toBeUndefined();
+    const leaf3 = (cleared as Extract<PaneNode, { kind: "split" }>)
+      .children[1] as Extract<PaneNode, { kind: "split" }>;
+    expect(leaf3.children[1]).not.toHaveProperty("resume");
+  });
+
+  it("preserves identity on no-op updates", () => {
+    const tree = row(1, 2);
+    expect(setLeafResume(tree, 9, UUID)).toBe(tree);
+    expect(setLeafResume(tree, 1, null)).toBe(tree);
+    const anchored = setLeafResume(tree, 1, UUID);
+    expect(setLeafResume(anchored, 1, UUID)).toBe(anchored);
+  });
+});
 
 describe("swapLeafInDirection", () => {
   it("swaps the active pane with its neighbor to the left", () => {

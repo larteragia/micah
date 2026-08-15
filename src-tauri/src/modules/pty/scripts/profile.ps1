@@ -12,6 +12,56 @@ if ($env:MICAH_CLI -and (Test-Path -LiteralPath $env:MICAH_CLI -PathType Leaf)) 
     }
 }
 
+# Claude Code wrapper: every launch is born with a session id generated here,
+# announced to the host via an OSC 777 `session` marker so the tab can resume
+# the same conversation after a restart. Flags and subcommands that carry
+# their own session semantics pass through untouched (a typed --resume or
+# --session-id id is re-anchored, never rewritten).
+function global:claude {
+    $exe = Get-Command -Name claude -CommandType Application, ExternalScript -ErrorAction SilentlyContinue |
+        Select-Object -First 1
+    if (-not $exe) {
+        Write-Error 'claude: nao encontrado no PATH'
+        return
+    }
+    $uuidRe = '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+    $subcommands = @('mcp', 'agents', 'doctor', 'plugin', 'install', 'update', 'auth',
+        'project', 'setup-token', 'import', 'gateway', 'auto-mode', 'ultrareview')
+    $sessionFlags = @('--resume', '-r', '--session-id')
+    $plainFlags = @('--continue', '-c', '-p', '--print', '--version', '-v', '--help', '-h')
+    $passthrough = $false
+    $fork = $false
+    $anchor = $null
+    for ($i = 0; $i -lt $args.Count; $i++) {
+        $arg = [string]$args[$i]
+        if ($sessionFlags -contains $arg) {
+            $passthrough = $true
+            if (($i + 1) -lt $args.Count -and ([string]$args[$i + 1]) -match $uuidRe) {
+                $anchor = ([string]$args[$i + 1]).ToLowerInvariant()
+            }
+        } elseif ($plainFlags -contains $arg) {
+            $passthrough = $true
+        } elseif ($arg -eq '--fork-session') {
+            $passthrough = $true
+            $fork = $true
+        } elseif (-not $arg.StartsWith('-') -and $subcommands -contains $arg) {
+            $passthrough = $true
+        }
+    }
+    $esc = [char]27
+    if ($passthrough) {
+        # A forked session gets a fresh id chosen by the CLI: unknowable here.
+        if ($anchor -and -not $fork) {
+            [Console]::Write("$esc]777;notify;Micah;claude;session;$anchor$esc\")
+        }
+        & $exe.Source @args
+        return
+    }
+    $sid = [guid]::NewGuid().ToString()
+    [Console]::Write("$esc]777;notify;Micah;claude;session;$sid$esc\")
+    & $exe.Source --session-id $sid @args
+}
+
 try {
     [Console]::InputEncoding  = [System.Text.UTF8Encoding]::new($false)
     [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)

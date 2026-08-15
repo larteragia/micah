@@ -1,3 +1,4 @@
+import { isClaudeSessionId } from "@/modules/terminal/lib/claudeResume";
 import {
   isLeaf,
   type PaneNode,
@@ -12,7 +13,7 @@ import type {
 } from "@/modules/tabs/lib/useTabs";
 
 export type SerializedNode =
-  | { kind: "leaf"; cwd?: string; active?: boolean }
+  | { kind: "leaf"; cwd?: string; active?: boolean; resume?: string }
   | { kind: "split"; dir: SplitDir; children: SerializedNode[] };
 
 export type SerializedTab =
@@ -45,6 +46,7 @@ function serializeNode(node: PaneNode, activeLeafId: number): SerializedNode {
       kind: "leaf",
       ...(node.cwd !== undefined && { cwd: node.cwd }),
       ...(node.id === activeLeafId && { active: true }),
+      ...(node.resume !== undefined && { resume: node.resume }),
     };
   }
   return {
@@ -115,6 +117,9 @@ function hydrateNode(
       kind: "leaf",
       id,
       ...(node.cwd !== undefined && { cwd: node.cwd }),
+      // A poisoned spaces.json must never reach the shell: only a strict
+      // UUID survives hydration.
+      ...(isClaudeSessionId(node.resume) && { resume: node.resume }),
     };
   }
   const children = node.children.map((c) => hydrateNode(c, allocId, acc));

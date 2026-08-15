@@ -147,6 +147,8 @@ export type Preferences = {
   customEndpoints: CustomEndpoint[];
   /** Passes --dangerously-skip-permissions to the Claude Code CLI. */
   claudeCodeSkipPermissions: boolean;
+  /** Restored terminal panes replay their anchored Claude conversation. */
+  resumeClaudeTabs: boolean;
   sttProvider: SttProvider;
   groqSttModel: string;
   whispercppBaseURL: string;
@@ -237,6 +239,7 @@ const KEY_OPENAI_COMPAT_MODEL_ID = "openaiCompatibleModelId";
 const KEY_OPENAI_COMPAT_CONTEXT_LIMIT = "openaiCompatibleContextLimit";
 const KEY_CUSTOM_ENDPOINTS = "customEndpoints";
 const KEY_CLAUDE_CODE_SKIP_PERMISSIONS = "claudeCodeSkipPermissions";
+const KEY_RESUME_CLAUDE_TABS = "resumeClaudeTabs";
 const KEY_STT_PROVIDER = "sttProvider";
 const KEY_GROQ_STT_MODEL = "groqSttModel";
 const KEY_WHISPERCPP_BASE_URL = "whispercppBaseURL";
@@ -321,6 +324,7 @@ export const DEFAULT_PREFERENCES: Preferences = {
   openaiCompatibleContextLimit: 128_000,
   customEndpoints: [],
   claudeCodeSkipPermissions: false,
+  resumeClaudeTabs: true,
   sttProvider: DEFAULT_STT_PROVIDER,
   groqSttModel: "whisper-large-v3-turbo",
   whispercppBaseURL: WHISPERCPP_DEFAULT_BASE_URL,
@@ -455,6 +459,9 @@ export async function loadPreferences(): Promise<Preferences> {
     claudeCodeSkipPermissions:
       get<boolean>(KEY_CLAUDE_CODE_SKIP_PERMISSIONS) ??
       DEFAULT_PREFERENCES.claudeCodeSkipPermissions,
+    resumeClaudeTabs:
+      get<boolean>(KEY_RESUME_CLAUDE_TABS) ??
+      DEFAULT_PREFERENCES.resumeClaudeTabs,
     sttProvider:
       get<SttProvider>(KEY_STT_PROVIDER) ?? DEFAULT_PREFERENCES.sttProvider,
     groqSttModel:
@@ -868,6 +875,10 @@ export async function setAgentNotifications(value: boolean): Promise<void> {
   await writePref(KEY_AGENT_NOTIFICATIONS, value);
 }
 
+export async function setResumeClaudeTabs(value: boolean): Promise<void> {
+  await writePref(KEY_RESUME_CLAUDE_TABS, value);
+}
+
 export async function setAgentLaunchCommands(
   value: AgentLaunchCommands,
 ): Promise<void> {
@@ -925,6 +936,7 @@ export async function onPreferencesChange(
     [KEY_OPENAI_COMPAT_CONTEXT_LIMIT]: "openaiCompatibleContextLimit",
     [KEY_CUSTOM_ENDPOINTS]: "customEndpoints",
     [KEY_CLAUDE_CODE_SKIP_PERMISSIONS]: "claudeCodeSkipPermissions",
+    [KEY_RESUME_CLAUDE_TABS]: "resumeClaudeTabs",
     [KEY_STT_PROVIDER]: "sttProvider",
     [KEY_GROQ_STT_MODEL]: "groqSttModel",
     [KEY_WHISPERCPP_BASE_URL]: "whispercppBaseURL",

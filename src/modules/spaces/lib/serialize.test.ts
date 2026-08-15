@@ -143,6 +143,48 @@ describe("hydrateTabs", () => {
     ).toEqual([]);
   });
 
+  it("round-trips the resume anchor per leaf", () => {
+    const uuid = "3f8a1c2e-9b4d-4f6a-8e2c-1a5d7b9c0e42";
+    const other = "94144000-8101-401c-808b-f7c2291aa747";
+    const tree: PaneNode = {
+      kind: "split",
+      id: 10,
+      dir: "row",
+      children: [
+        { kind: "leaf", id: 11, cwd: "/a", resume: uuid },
+        { kind: "leaf", id: 12, cwd: "/b", resume: other },
+        { kind: "leaf", id: 13, cwd: "/c" },
+      ],
+    };
+    const serialized = serializeTabs([term({ paneTree: tree, activeLeafId: 11 })]);
+    const [restored] = hydrateTabs(serialized, "s1", counter());
+    if (restored.kind !== "terminal" || restored.paneTree.kind !== "split")
+      throw new Error("bad shape");
+    expect(restored.paneTree.children[0]).toMatchObject({ resume: uuid });
+    expect(restored.paneTree.children[1]).toMatchObject({ resume: other });
+    expect(restored.paneTree.children[2]).not.toHaveProperty("resume");
+  });
+
+  it("drops a poisoned resume field on hydrate", () => {
+    for (const bad of [
+      "claude --resume x; rm -rf ~",
+      "3f8a1c2e-9b4d-4f6a-8e2c-1a5d7b9c0e4",
+      "",
+      42,
+      { evil: true },
+    ]) {
+      const serialized = [
+        {
+          kind: "terminal",
+          tree: { kind: "leaf", cwd: "/a", resume: bad },
+        },
+      ] as unknown as SerializedTab[];
+      const [restored] = hydrateTabs(serialized, "s1", counter());
+      if (restored.kind !== "terminal") throw new Error("bad shape");
+      expect(restored.paneTree).not.toHaveProperty("resume");
+    }
+  });
+
   it("hydrates editor/preview/markdown as cold with derived titles", () => {
     const serialized: SerializedTab[] = [
       { kind: "editor", path: "/a/foo.ts" },

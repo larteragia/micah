@@ -23,6 +23,7 @@ import { usePreferencesStore } from "@/modules/settings/preferences";
 import type { ThemePref } from "@/modules/settings/store";
 import {
   setAgentNotifications,
+  setResumeClaudeTabs,
   setAutostart,
   setDefaultWorkspaceEnv,
   setExplorerGitDecorations,
@@ -117,6 +118,7 @@ export function GeneralSection() {
   const terminalScrollback = usePreferencesStore((s) => s.terminalScrollback);
   const zoomLevel = usePreferencesStore((s) => s.zoomLevel);
   const agentNotifications = usePreferencesStore((s) => s.agentNotifications);
+  const resumeClaudeTabs = usePreferencesStore((s) => s.resumeClaudeTabs);
   const [notificationTest, setNotificationTest] =
     useState<NotificationTestState>("idle");
   const notificationTestPending =
@@ -512,6 +514,15 @@ export function GeneralSection() {
               }}
             />
           </div>
+        </SettingRow>
+        <SettingRow
+          title="Resume Claude conversations"
+          description="Restored terminal tabs come back with the Claude Code conversation they were running, via claude --resume. Applies on next launch."
+        >
+          <Switch
+            checked={resumeClaudeTabs}
+            onCheckedChange={(v) => void setResumeClaudeTabs(v)}
+          />
         </SettingRow>
       </div>
 

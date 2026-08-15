@@ -1,5 +1,9 @@
 import type { Tab } from "@/modules/tabs";
 import { hasLeaf, leafIdForPty } from "@/modules/terminal";
+import {
+  clearClaudeResume,
+  isClaudeSessionId,
+} from "@/modules/terminal/lib/claudeResume";
 import { listen } from "@tauri-apps/api/event";
 import { useEffect, useRef } from "react";
 import { displayAgent } from "../lib/format";
@@ -16,6 +20,7 @@ type Ctx = {
   activeId: number;
   focused: boolean;
   onActivate: Activate;
+  setLeafResume: (leafId: number, sessionId: string | null) => void;
 };
 
 function tabInfo(
@@ -84,10 +89,31 @@ function handleSignal(sig: AgentSignal, ctx: Ctx): void {
       maybeTriggerManagedReview(leafId);
       return;
     }
-    case "exited":
+    case "session":
+      // The shell wrapper announced the Claude session living in this pane.
+      // Anchoring rides the paneTree so every persistence flush carries it;
+      // a queued boot injection for this leaf is now moot.
+      if (isClaudeSessionId(sig.session)) {
+        clearClaudeResume(leafId);
+        ctx.setLeafResume(leafId, sig.session.toLowerCase());
+      }
+      return;
+    case "exited": {
+      // Clean Claude exit with the window alive: the conversation was closed
+      // on purpose, so the pane goes back to plain shell on the next restore.
+      // Never clear blindly: this signal also fires when the PTY dies during
+      // app shutdown, which is exactly when the anchor must survive.
+      const exiting = store.sessions[leafId];
+      if (
+        exiting?.agent === "claude" &&
+        document.visibilityState === "visible"
+      ) {
+        ctx.setLeafResume(leafId, null);
+      }
       store.finish(leafId);
       useManagedAgentsStore.getState().remove(leafId);
       return;
+    }
   }
 }
 
@@ -95,14 +121,22 @@ export function AgentNotificationsBridge({
   tabs,
   activeId,
   onActivate,
+  setLeafResume,
 }: {
   tabs: Tab[];
   activeId: number;
   onActivate: Activate;
+  setLeafResume: (leafId: number, sessionId: string | null) => void;
 }) {
   const focused = useWindowFocus();
-  const ctxRef = useRef<Ctx>({ tabs, activeId, focused, onActivate });
-  ctxRef.current = { tabs, activeId, focused, onActivate };
+  const ctxRef = useRef<Ctx>({
+    tabs,
+    activeId,
+    focused,
+    onActivate,
+    setLeafResume,
+  });
+  ctxRef.current = { tabs, activeId, focused, onActivate, setLeafResume };
 
   useEffect(() => {
     let alive = true;

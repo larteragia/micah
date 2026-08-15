@@ -14,6 +14,7 @@ import {
   removeLeaf,
   type SplitDir,
   setLeafCwd as setLeafCwdInTree,
+  setLeafResume as setLeafResumeInTree,
   siblingLeafOf,
   splitLeaf,
   swapLeafInDirection,
@@ -1137,6 +1138,25 @@ export function useTabs(initial?: Partial<TerminalTab>) {
     });
   }, []);
 
+  /** Anchor (or clear) the Claude session id living in a leaf. Lives in the
+   * paneTree, not in a side store, so every persistence flush carries it. */
+  const setLeafResume = useCallback(
+    (leafId: number, resume: string | null) => {
+      setTabs((curr) => {
+        let changed = false;
+        const next = curr.map((t) => {
+          if (t.kind !== "terminal" || !hasLeaf(t.paneTree, leafId)) return t;
+          const paneTree = setLeafResumeInTree(t.paneTree, leafId, resume);
+          if (paneTree === t.paneTree) return t;
+          changed = true;
+          return { ...t, paneTree };
+        });
+        return changed ? next : curr;
+      });
+    },
+    [],
+  );
+
   const focusPane = useCallback((tabId: number, leafId: number) => {
     setTabs((curr) =>
       curr.map((t) => {
@@ -1336,6 +1356,7 @@ export function useTabs(initial?: Partial<TerminalTab>) {
     updateTab,
     selectByIndex,
     setLeafCwd,
+    setLeafResume,
     focusPane,
     focusNextPaneInTab,
     swapActivePaneInDirection,

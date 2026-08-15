@@ -11,7 +11,14 @@ export type PaneBounds = {
 };
 
 export type PaneNode =
-  | { kind: "leaf"; id: PaneId; slotId?: PaneId; cwd?: string }
+  | {
+      kind: "leaf";
+      id: PaneId;
+      slotId?: PaneId;
+      cwd?: string;
+      /** Claude Code session id anchored to this pane, resumed on restore. */
+      resume?: string;
+    }
   | {
       kind: "split";
       id: PaneId;
@@ -56,6 +63,41 @@ export function setLeafCwd(
   let changed = false;
   const next = n.children.map((c) => {
     const u = setLeafCwd(c, id, cwd);
+    if (u !== c) changed = true;
+    return u;
+  });
+  return changed ? { ...n, children: next } : n;
+}
+
+export function findLeafResume(n: PaneNode, id: PaneId): string | undefined {
+  if (isLeaf(n)) return n.id === id ? n.resume : undefined;
+  for (const c of n.children) {
+    const found = findLeafResume(c, id);
+    if (found !== undefined) return found;
+  }
+  return undefined;
+}
+
+/** Anchor (or clear, with `null`) a leaf's Claude session id. Mirrors the
+ * setLeafCwd identity-preserving shape so no-op updates never re-render. */
+export function setLeafResume(
+  n: PaneNode,
+  id: PaneId,
+  resume: string | null,
+): PaneNode {
+  if (isLeaf(n)) {
+    if (n.id !== id) return n;
+    if (resume === null) {
+      if (n.resume === undefined) return n;
+      const { resume: _dropped, ...rest } = n;
+      return rest;
+    }
+    if (n.resume === resume) return n;
+    return { ...n, resume };
+  }
+  let changed = false;
+  const next = n.children.map((c) => {
+    const u = setLeafResume(c, id, resume);
     if (u !== c) changed = true;
     return u;
   });

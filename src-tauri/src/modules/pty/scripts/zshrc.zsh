@@ -17,6 +17,56 @@ if [[ -n "$MICAH_CLI" && -x "$MICAH_CLI" ]]; then
   }
 fi
 
+# Claude Code wrapper: every launch is born with a session id generated here,
+# announced to the host via an OSC 777 `session` marker so the tab can resume
+# the same conversation after a restart. Flags and subcommands with their own
+# session semantics pass through untouched (a typed --resume or --session-id
+# id is re-anchored, never rewritten).
+claude() {
+  local exe
+  exe="$(whence -p claude 2>/dev/null)"
+  if [[ -z "$exe" ]]; then
+    print -u2 "claude: nao encontrado no PATH"
+    return 127
+  fi
+  local uuid_re='^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+  local passthrough='' fork='' anchor='' await_id='' arg
+  for arg in "$@"; do
+    if [[ -n "$await_id" ]]; then
+      [[ "$arg" =~ $uuid_re ]] && anchor="${arg:l}"
+      await_id=''
+    fi
+    case "$arg" in
+      --resume|-r|--session-id) passthrough=1; await_id=1 ;;
+      --continue|-c|-p|--print|--version|-v|--help|-h) passthrough=1 ;;
+      --fork-session) passthrough=1; fork=1 ;;
+      -*) ;;
+      mcp|agents|doctor|plugin|install|update|auth|project|setup-token|import|gateway|auto-mode|ultrareview) passthrough=1 ;;
+    esac
+  done
+  if [[ -n "$passthrough" ]]; then
+    # A forked session gets a fresh id chosen by the CLI: unknowable here.
+    if [[ -n "$anchor" && -z "$fork" ]]; then
+      printf '\e]777;notify;Micah;claude;session;%s\e\\' "$anchor"
+    fi
+    "$exe" "$@"
+    return
+  fi
+  local sid=''
+  if command -v uuidgen >/dev/null 2>&1; then
+    sid="$(command uuidgen 2>/dev/null)"
+    sid="${sid:l}"
+  elif [[ -r /proc/sys/kernel/random/uuid ]]; then
+    sid="$(</proc/sys/kernel/random/uuid)"
+  fi
+  if [[ ! "$sid" =~ $uuid_re ]]; then
+    "$exe" "$@"
+    return
+  fi
+  printf '\e]777;notify;Micah;claude;session;%s\e\\' "$sid"
+  "$exe" --session-id "$sid" "$@"
+}
+
 # Re-source guard within a single shell (e.g. user runs `source ~/.zshrc`).
 # This is NOT exported, so each nested zsh installs its own hooks — desired,
 # since every interactive shell needs its own prompt integration.

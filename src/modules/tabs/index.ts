@@ -23,5 +23,6 @@ export {
   type AiDiffStatus,
   type TabPatch,
 } from "./lib/useTabs";
+export { useClaudeResumeInjection } from "./lib/useClaudeResumeInjection";
 export { useWorkspaceCwd } from "./lib/useWorkspaceCwd";
 export { useWindowTitle } from "./lib/useWindowTitle";

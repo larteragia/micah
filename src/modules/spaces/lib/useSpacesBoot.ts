@@ -6,6 +6,7 @@ import { isLeaf, type PaneNode } from "@/modules/terminal/lib/panes";
 import { parseWorkspaceScopeKey, type WorkspaceEnv } from "@/modules/workspace";
 import { useEffect, useRef } from "react";
 import { activeSpaceEnv, freshTabCwd } from "./activeSpace";
+import { prepareClaudeResumes } from "./claudeResumeBoot";
 import { freshTerminalTab, hydrateTabs } from "./serialize";
 import { loadAll, type SpaceMeta, saveActiveId, saveSpacesList } from "./store";
 import { useSpaces } from "./useSpaces";
@@ -106,15 +107,33 @@ export function useSpacesBoot({
           uniqueCwds(restored).map((cwd) => native.workspaceAuthorize(cwd)),
         );
 
+        // Prune dead Claude anchors and queue live ones for injection on
+        // first activation. Pref off degrades to today's shell-only restore.
+        await usePreferencesStore
+          .getState()
+          .init()
+          .catch(() => {});
+        let tabsToMount = restored;
+        if (usePreferencesStore.getState().resumeClaudeTabs) {
+          try {
+            tabsToMount = await prepareClaudeResumes(restored, home, (id) => {
+              const env = spaces.find((s) => s.id === id)?.env;
+              return !env || env.kind === "local";
+            });
+          } catch (e) {
+            console.warn("[micah] claude resume prep failed:", e);
+          }
+        }
+
         const initialActiveIndex: Record<string, number> = {};
         for (const [id, st] of states)
           initialActiveIndex[id] = st.activeTabIndex;
         useSpaces.getState().hydrate(spaces, active, initialActiveIndex);
 
-        const inActive = restored.filter((t) => t.spaceId === active);
+        const inActive = tabsToMount.filter((t) => t.spaceId === active);
         const idx = states.get(active)?.activeTabIndex ?? 0;
-        const activeTab = inActive[idx] ?? inActive[0] ?? restored[0];
-        replaceTabs(restored, activeTab.id);
+        const activeTab = inActive[idx] ?? inActive[0] ?? tabsToMount[0];
+        replaceTabs(tabsToMount, activeTab.id);
       } catch (e) {
         console.error("[micah] spaces boot failed:", e);
       } finally {

@@ -88,6 +88,7 @@ import {
 import { StatusBar } from "@/modules/statusbar";
 import {
   TabSwitcherHud,
+  useClaudeResumeInjection,
   useTabSwitcher,
   useTabs,
   useWindowTitle,
@@ -175,6 +176,7 @@ export default function App() {
     updateTab,
     selectByIndex,
     setLeafCwd,
+    setLeafResume,
     focusPane,
     focusNextPaneInTab,
     swapActivePaneInDirection,
@@ -278,6 +280,8 @@ export default function App() {
     activeSpaceId: activeSpaceId ?? DEFAULT_SPACE_ID,
     enabled: spacesHydrated,
   });
+
+  useClaudeResumeInjection(tabs);
 
   const prevSpaceRef = useRef(activeSpaceId);
   useEffect(() => {
@@ -1682,6 +1686,7 @@ export default function App() {
             tabs={tabs}
             activeId={activeId}
             onActivate={onActivateAgent}
+            setLeafResume={setLeafResume}
           />
           <Toaster position="bottom-right" />
 

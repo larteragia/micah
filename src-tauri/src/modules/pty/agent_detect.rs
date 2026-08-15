@@ -32,6 +32,7 @@ pub enum Transition {
     Attention,
     Finished,
     Exited,
+    Session { session: String },
 }
 
 #[derive(Clone, serde::Serialize)]
@@ -39,20 +40,48 @@ pub struct AgentSignal {
     pub id: u32,
     pub kind: &'static str,
     pub agent: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session: Option<String>,
 }
 
 impl Transition {
     pub fn into_signal(self, id: u32) -> AgentSignal {
         match self {
             Transition::Started { agent } => {
-                AgentSignal { id, kind: "started", agent: Some(agent) }
+                AgentSignal { id, kind: "started", agent: Some(agent), session: None }
             }
-            Transition::Working => AgentSignal { id, kind: "working", agent: None },
-            Transition::Attention => AgentSignal { id, kind: "attention", agent: None },
-            Transition::Finished => AgentSignal { id, kind: "finished", agent: None },
-            Transition::Exited => AgentSignal { id, kind: "exited", agent: None },
+            Transition::Working => AgentSignal { id, kind: "working", agent: None, session: None },
+            Transition::Attention => {
+                AgentSignal { id, kind: "attention", agent: None, session: None }
+            }
+            Transition::Finished => {
+                AgentSignal { id, kind: "finished", agent: None, session: None }
+            }
+            Transition::Exited => AgentSignal { id, kind: "exited", agent: None, session: None },
+            Transition::Session { session } => {
+                AgentSignal { id, kind: "session", agent: None, session: Some(session) }
+            }
         }
     }
+}
+
+/// Strict 8-4-4-4-12 hex UUID. PTY output is untrusted, so a session id only
+/// crosses into a signal after passing this.
+fn is_uuid(s: &str) -> bool {
+    let b = s.as_bytes();
+    if b.len() != 36 {
+        return false;
+    }
+    for (i, &c) in b.iter().enumerate() {
+        if matches!(i, 8 | 13 | 18 | 23) {
+            if c != b'-' {
+                return false;
+            }
+        } else if !c.is_ascii_hexdigit() {
+            return false;
+        }
+    }
+    true
 }
 
 pub struct AgentDetector {
@@ -175,6 +204,17 @@ impl AgentDetector {
                 }
                 None => ("claude", tail),
             };
+            // New `session;<uuid>` verb: the shell wrapper anchors the Claude
+            // Code session id it generated (or re-anchors a typed one).
+            if let Some(raw) = event.strip_prefix(b"session;") {
+                if let Ok(session) = std::str::from_utf8(raw) {
+                    if is_uuid(session) {
+                        self.ensure_armed(agent, emit);
+                        emit(Transition::Session { session: session.to_string() });
+                    }
+                }
+                return;
+            }
             // Self-arms when no shell preexec fired (bash, Windows, tmux).
             match event {
                 b"working" => {
@@ -378,6 +418,78 @@ mod tests {
             run(&mut d, &osc("777;notify;Micah;pi;finished")),
             vec![Transition::Finished]
         );
+    }
+
+    #[test]
+    fn session_verb_self_arms_and_carries_uuid() {
+        let mut d = AgentDetector::new();
+        let uuid = "3f8a1c2e-9b4d-4f6a-8e2c-1a5d7b9c0e42";
+        assert_eq!(
+            run(&mut d, &osc(&format!("777;notify;Micah;claude;session;{uuid}"))),
+            vec![started("claude"), Transition::Session { session: uuid.into() }]
+        );
+    }
+
+    #[test]
+    fn session_verb_after_preexec_emits_only_session() {
+        let mut d = AgentDetector::new();
+        run(&mut d, &osc("133;C;claude"));
+        let uuid = "94144000-8101-401c-808b-f7c2291aa747";
+        assert_eq!(
+            run(&mut d, &osc(&format!("777;notify;Micah;claude;session;{uuid}"))),
+            vec![Transition::Session { session: uuid.into() }]
+        );
+    }
+
+    #[test]
+    fn session_verb_rejects_non_uuid_payload() {
+        for bad in [
+            "not-a-uuid",
+            "3f8a1c2e-9b4d-4f6a-8e2c-1a5d7b9c0e4",
+            "3f8a1c2e-9b4d-4f6a-8e2c-1a5d7b9c0e422",
+            "3f8a1c2eG9b4d-4f6a-8e2c-1a5d7b9c0e42",
+            "$(rm -rf ~); echo 3f8a1c2e-9b4d-4f6a-8e2c-1a5d7b9c0e42",
+            "",
+        ] {
+            let mut d = AgentDetector::new();
+            assert!(
+                run(&mut d, &osc(&format!("777;notify;Micah;claude;session;{bad}"))).is_empty(),
+                "payload {bad:?} must be dropped"
+            );
+        }
+    }
+
+    #[test]
+    fn session_verb_ignores_unknown_agent() {
+        let mut d = AgentDetector::new();
+        assert!(run(
+            &mut d,
+            &osc("777;notify;Micah;evil;session;3f8a1c2e-9b4d-4f6a-8e2c-1a5d7b9c0e42")
+        )
+        .is_empty());
+    }
+
+    #[test]
+    fn legacy_three_field_session_shape_is_not_a_session() {
+        // `notify;Micah;session;<uuid>` parses "session" as an agent name,
+        // which is unknown: dropped without touching the legacy verbs.
+        let mut d = AgentDetector::new();
+        assert!(run(
+            &mut d,
+            &osc("777;notify;Micah;session;3f8a1c2e-9b4d-4f6a-8e2c-1a5d7b9c0e42")
+        )
+        .is_empty());
+        assert_eq!(
+            run(&mut d, &osc("777;notify;Micah;attention")),
+            vec![started("claude"), Transition::Attention]
+        );
+    }
+
+    #[test]
+    fn is_uuid_accepts_canonical_and_uppercase() {
+        assert!(is_uuid("3f8a1c2e-9b4d-4f6a-8e2c-1a5d7b9c0e42"));
+        assert!(is_uuid("3F8A1C2E-9B4D-4F6A-8E2C-1A5D7B9C0E42"));
+        assert!(!is_uuid("3f8a1c2e09b4d04f6a08e2c01a5d7b9c0e42"));
     }
 
     #[test]
