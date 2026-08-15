@@ -1,13 +1,9 @@
-import type { AgentSession } from "@/modules/agents/lib/types";
 import { useAgentStore } from "@/modules/agents/store/agentStore";
 import { useChatStore } from "@/modules/ai";
+import { leafHasForegroundProcess } from "@/modules/terminal";
 import { cn } from "@/lib/utils";
 import { lazy, Suspense, useEffect, useState, type ReactNode } from "react";
-import {
-  orderedLanes,
-  type LaneKind,
-  type ViewerLane,
-} from "./lib/aiViewerLanes";
+import { orderedLanes, type LaneKind } from "./lib/aiViewerLanes";
 import { useAiViewerStore } from "./lib/useAiViewerStore";
 import { useClaudeSessionFeed } from "./lib/useClaudeSessionFeed";
 import { LeftPanelEmpty } from "./LeftPanelEmpty";
@@ -19,11 +15,23 @@ const ReadOnlyStream = lazy(() =>
 );
 
 const TERMINAL_POLL_MS = 500;
+const ALIVE_POLL_MS = 2000;
 
 const LANE_VERB: Record<LaneKind, string> = {
   read: "reading",
   edit: "editing",
   write: "writing",
+};
+
+export type AnchoredLeaf = { leafId: number; resume: string };
+
+/** What a terminal lane needs to label itself; agent-signal sessions and
+ * anchored-but-signalless panes both reduce to this. */
+type LaneMeta = {
+  leafId: number;
+  agent: string;
+  status: string;
+  resume: string | null;
 };
 
 /**
@@ -33,23 +41,44 @@ const LANE_VERB: Record<LaneKind, string> = {
  * A terminal agent's lane shows what its TUI does not: the files it is
  * reading, editing and writing, tailed from the Claude Code session
  * transcript anchored to the pane. The raw terminal buffer is only the
- * fallback when no transcript exists. Watching only; intervening is the
- * conversation's job.
+ * fallback when no transcript exists. A pane with an anchored session and a
+ * live foreground process counts even when no OSC signal ever arrived
+ * (claude launched outside the shell wrapper). Watching only; intervening
+ * is the conversation's job.
  */
 export function AiViewerArea({
   resolveLeafResume,
+  anchoredLeaves,
 }: {
   resolveLeafResume?: (leafId: number) => string | null;
+  anchoredLeaves?: AnchoredLeaf[];
 }) {
   const lanes = useAiViewerStore((s) => s.lanes);
   const sessions = useAgentStore((s) => s.sessions);
 
   const localLanes = orderedLanes(lanes);
-  const terminalSessions = Object.values(sessions).sort(
-    (a, b) => a.startedAt - b.startedAt,
-  );
+  const signalled: LaneMeta[] = Object.values(sessions)
+    .sort((a, b) => a.startedAt - b.startedAt)
+    .map((s) => ({
+      leafId: s.leafId,
+      agent: s.agent,
+      status: s.status,
+      resume: resolveLeafResume?.(s.leafId) ?? null,
+    }));
 
-  if (localLanes.length === 0 && terminalSessions.length === 0) {
+  const candidates = (anchoredLeaves ?? []).filter((a) => !sessions[a.leafId]);
+  const aliveIds = useAliveLeaves(candidates.map((a) => a.leafId));
+  const anchored: LaneMeta[] = candidates
+    .filter((a) => aliveIds.includes(a.leafId))
+    .map((a) => ({
+      leafId: a.leafId,
+      agent: "claude",
+      status: "working",
+      resume: a.resume,
+    }));
+
+  const terminals = [...signalled, ...anchored];
+  if (localLanes.length === 0 && terminals.length === 0) {
     return (
       <LeftPanelEmpty
         title="No AI is working right now"
@@ -69,15 +98,45 @@ export function AiViewerArea({
           <ReadOnlyStream content={lane.content} />
         </Lane>
       ))}
-      {terminalSessions.map((session) => (
-        <TerminalSessionLanes
-          key={session.leafId}
-          session={session}
-          resume={resolveLeafResume?.(session.leafId) ?? null}
-        />
+      {terminals.map((meta) => (
+        <TerminalSessionLanes key={meta.leafId} meta={meta} />
       ))}
     </div>
   );
+}
+
+/** Which of these leaves have a live foreground process, polled lightly
+ * while the viewer is on screen. */
+function useAliveLeaves(leafIds: number[]): number[] {
+  const [alive, setAlive] = useState<number[]>([]);
+  const key = leafIds.join(",");
+  useEffect(() => {
+    const ids = key.length > 0 ? key.split(",").map(Number) : [];
+    if (ids.length === 0) {
+      setAlive((prev) => (prev.length === 0 ? prev : []));
+      return;
+    }
+    let on = true;
+    const tick = async () => {
+      const checks = await Promise.all(
+        ids.map(async (id) => ((await leafHasForegroundProcess(id)) ? id : -1)),
+      );
+      if (!on) return;
+      const next = checks.filter((id) => id !== -1);
+      setAlive((prev) =>
+        prev.length === next.length && prev.every((v, i) => v === next[i])
+          ? prev
+          : next,
+      );
+    };
+    void tick();
+    const timer = setInterval(() => void tick(), ALIVE_POLL_MS);
+    return () => {
+      on = false;
+      clearInterval(timer);
+    };
+  }, [key]);
+  return alive;
 }
 
 function Lane({
@@ -109,14 +168,8 @@ function Lane({
   );
 }
 
-function TerminalSessionLanes({
-  session,
-  resume,
-}: {
-  session: AgentSession;
-  resume: string | null;
-}) {
-  const feed = useClaudeSessionFeed(resume);
+function TerminalSessionLanes({ meta }: { meta: LaneMeta }) {
+  const feed = useClaudeSessionFeed(meta.resume);
   const fileLanes = orderedLanes(feed.lanes);
   if (feed.status === "feed" && fileLanes.length > 0) {
     return (
@@ -124,7 +177,7 @@ function TerminalSessionLanes({
         {fileLanes.map((lane) => (
           <Lane
             key={lane.toolCallId}
-            label={sessionLaneLabel(session, lane)}
+            label={`${meta.agent} · ${LANE_VERB[lane.kind]} ${lane.path} (${meta.status})`}
             dimmed={lane.done}
           >
             <ReadOnlyStream content={lane.content} />
@@ -133,14 +186,10 @@ function TerminalSessionLanes({
       </>
     );
   }
-  return <TerminalBufferLane session={session} />;
+  return <TerminalBufferLane meta={meta} />;
 }
 
-function sessionLaneLabel(session: AgentSession, lane: ViewerLane): string {
-  return `${session.agent} · ${LANE_VERB[lane.kind]} ${lane.path} (${session.status})`;
-}
-
-function TerminalBufferLane({ session }: { session: AgentSession }) {
+function TerminalBufferLane({ meta }: { meta: LaneMeta }) {
   const [buffer, setBuffer] = useState("");
 
   // The terminal's buffer has no change events at this layer; a light poll
@@ -149,7 +198,7 @@ function TerminalBufferLane({ session }: { session: AgentSession }) {
     let alive = true;
     const tick = () => {
       if (!alive) return;
-      const text = useChatStore.getState().live.readLeafBuffer(session.leafId);
+      const text = useChatStore.getState().live.readLeafBuffer(meta.leafId);
       if (text !== null) setBuffer(text);
     };
     tick();
@@ -158,12 +207,12 @@ function TerminalBufferLane({ session }: { session: AgentSession }) {
       alive = false;
       clearInterval(timer);
     };
-  }, [session.leafId]);
+  }, [meta.leafId]);
 
   return (
     <Lane
-      label={`${session.agent} · terminal output (${session.status})`}
-      dimmed={session.status === "waiting"}
+      label={`${meta.agent} · terminal output (${meta.status})`}
+      dimmed={meta.status === "waiting"}
     >
       <ReadOnlyStream content={buffer} />
     </Lane>

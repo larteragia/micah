@@ -104,6 +104,7 @@ import {
 import {
   clearFocusedTerminal,
   disposeSession,
+  collectLeafResumes,
   findLeafCwd,
   findLeafResume,
   hasLeaf,
@@ -908,8 +909,7 @@ export default function App() {
         : null;
   const isRepositoryContextCurrent = useCallback(
     (spaceId: string, workspaceKey: string) => {
-      const currentSpaceId =
-        useSpaces.getState().activeId ?? DEFAULT_SPACE_ID;
+      const currentSpaceId = useSpaces.getState().activeId ?? DEFAULT_SPACE_ID;
       const currentWorkspaceKey = workspaceScopeKey(
         useWorkspaceEnvStore.getState().env,
       );
@@ -991,6 +991,16 @@ export default function App() {
       swapActivePaneInDirection(activeId, direction, livePaneBounds(activeId));
     },
     [activeId, livePaneBounds, swapActivePaneInDirection],
+  );
+
+  // The Ai Viewer also watches anchored panes that never emitted an agent
+  // signal (claude launched outside the wrapper); it needs the full list.
+  const anchoredLeaves = useMemo(
+    () =>
+      tabs.flatMap((t) =>
+        t.kind === "terminal" ? collectLeafResumes(t.paneTree) : [],
+      ),
+    [tabs],
   );
 
   // The Ai Viewer resolves a pane's anchored Claude session through the
@@ -1167,8 +1177,7 @@ export default function App() {
         id === "editor.aiComplete" ||
         id === "editor.codeComplete"
       ) {
-        const focusedTab =
-          effectivePane === "left" ? activeLeftTab : activeTab;
+        const focusedTab = effectivePane === "left" ? activeLeftTab : activeTab;
         return focusedTab?.kind !== "editor";
       }
       if (id === "ai.askSelection") {
@@ -1654,77 +1663,80 @@ export default function App() {
                   maxSize={`${BROWSER_MAX_WIDTH}px`}
                   groupResizeBehavior="preserve-pixel-size"
                 >
-                <div className="relative h-full min-h-0">
-                  {/* Only the browser surface stays mounted across modes: it is
+                  <div className="relative h-full min-h-0">
+                    {/* Only the browser surface stays mounted across modes: it is
                       a native webview, and unmounting it takes the page, the
                       session and the CDP endpoint with it. It hides with
                       `invisible`, never `display: none`, because the native
                       webview is positioned from this placeholder's rectangle
                       and an unlaid-out host measures as nothing, which reads as
                       "not ready yet" and burns the attach retries. */}
-                  <div
-                    className={
-                      browserVisible && browser.enabled
-                        ? "absolute inset-0"
-                        : "invisible absolute inset-0"
-                    }
-                  >
-                    <BrowserPanel
-                      hostRef={browser.hostRef}
-                      url={browser.url}
-                      error={browser.error}
-                      cdpPort={browser.info?.cdp?.port ?? null}
-                      suppressed={browser.suppressed}
-                      onNavigate={browser.navigate}
-                      onGo={browser.go}
-                      onReload={browser.reload}
-                      onRetry={browser.retry}
-                      onSuppress={browser.suppress}
-                      onRelease={browser.release}
-                    />
-                  </div>
-                  {leftPanel.mode === "browser" && !browser.enabled ? (
-                    <div className="absolute inset-0 bg-card">
-                      <LeftPanelEmpty
-                        title="The browser panel is turned off"
-                        hint="Turn it back on from the command palette."
+                    <div
+                      className={
+                        browserVisible && browser.enabled
+                          ? "absolute inset-0"
+                          : "invisible absolute inset-0"
+                      }
+                    >
+                      <BrowserPanel
+                        hostRef={browser.hostRef}
+                        url={browser.url}
+                        error={browser.error}
+                        cdpPort={browser.info?.cdp?.port ?? null}
+                        suppressed={browser.suppressed}
+                        onNavigate={browser.navigate}
+                        onGo={browser.go}
+                        onReload={browser.reload}
+                        onRetry={browser.retry}
+                        onSuppress={browser.suppress}
+                        onRelease={browser.release}
                       />
                     </div>
-                  ) : null}
-                  {/* Stays MOUNTED across mode switches, hidden with
+                    {leftPanel.mode === "browser" && !browser.enabled ? (
+                      <div className="absolute inset-0 bg-card">
+                        <LeftPanelEmpty
+                          title="The browser panel is turned off"
+                          hint="Turn it back on from the command palette."
+                        />
+                      </div>
+                    ) : null}
+                    {/* Stays MOUNTED across mode switches, hidden with
                       `invisible`: unmounting would destroy unsaved CodeMirror
                       buffers, the same rule the center's WorkspaceSurface and
                       the browser surface above already follow. Focus capture
                       lives here, not on the whole panel, so browser chrome
                       never claims the editor pane. */}
-                  <div
-                    className={
-                      leftPanel.mode === "editor"
-                        ? "absolute inset-0 bg-card"
-                        : "invisible pointer-events-none absolute inset-0 bg-card"
-                    }
-                    aria-hidden={leftPanel.mode !== "editor"}
-                    onFocusCapture={() => setFocusedPane("left")}
-                  >
-                    <LeftEditorArea
-                      tabs={leftTabs}
-                      stackTabs={allLeftTabs}
-                      activeId={activeByPane.left}
-                      onSelect={setActiveLeft}
-                      onClose={(id) => void handleClose(id)}
-                      registerHandle={registerEditorHandle}
-                      onDirtyChange={handleEditorDirty}
-                      onSetMarkdownView={setMarkdownView}
-                    />
-                  </div>
-                  {/* Read-only, so unmounting when hidden is free (no user
-                      state to lose) and stops the terminal buffer polling. */}
-                  {leftPanel.mode === "ai-viewer" ? (
-                    <div className="absolute inset-0 bg-card">
-                      <AiViewerArea resolveLeafResume={resolveLeafResume} />
+                    <div
+                      className={
+                        leftPanel.mode === "editor"
+                          ? "absolute inset-0 bg-card"
+                          : "invisible pointer-events-none absolute inset-0 bg-card"
+                      }
+                      aria-hidden={leftPanel.mode !== "editor"}
+                      onFocusCapture={() => setFocusedPane("left")}
+                    >
+                      <LeftEditorArea
+                        tabs={leftTabs}
+                        stackTabs={allLeftTabs}
+                        activeId={activeByPane.left}
+                        onSelect={setActiveLeft}
+                        onClose={(id) => void handleClose(id)}
+                        registerHandle={registerEditorHandle}
+                        onDirtyChange={handleEditorDirty}
+                        onSetMarkdownView={setMarkdownView}
+                      />
                     </div>
-                  ) : null}
-                </div>
+                    {/* Read-only, so unmounting when hidden is free (no user
+                      state to lose) and stops the terminal buffer polling. */}
+                    {leftPanel.mode === "ai-viewer" ? (
+                      <div className="absolute inset-0 bg-card">
+                        <AiViewerArea
+                          resolveLeafResume={resolveLeafResume}
+                          anchoredLeaves={anchoredLeaves}
+                        />
+                      </div>
+                    ) : null}
+                  </div>
                 </ResizablePanel>
               )}
               {/* Dragging over a native child webview loses pointer capture, so

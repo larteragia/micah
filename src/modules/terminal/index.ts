@@ -21,6 +21,7 @@ export {
   useTerminalFileDrop,
 } from "./lib/useTerminalFileDrop";
 export {
+  collectLeafResumes,
   findLeafCwd,
   findLeafResume,
   hasLeaf,
