@@ -66,8 +66,9 @@ impl Transition {
 }
 
 /// Strict 8-4-4-4-12 hex UUID. PTY output is untrusted, so a session id only
-/// crosses into a signal after passing this.
-fn is_uuid(s: &str) -> bool {
+/// crosses into a signal after passing this. Also the gate for session ids
+/// arriving over IPC (fs::claude_session), same trust boundary.
+pub(crate) fn is_uuid(s: &str) -> bool {
     let b = s.as_bytes();
     if b.len() != 36 {
         return false;

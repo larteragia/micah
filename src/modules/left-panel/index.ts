@@ -1,3 +1,4 @@
+export { AiViewerArea } from "./AiViewerArea";
 export { LeftEditorArea } from "./LeftEditorArea";
 export { LeftPanelEmpty } from "./LeftPanelEmpty";
 export { LeftPanelSwitcher } from "./LeftPanelSwitcher";

@@ -1,3 +1,4 @@
+pub mod claude_session;
 pub mod file;
 pub mod grep;
 pub mod mutate;

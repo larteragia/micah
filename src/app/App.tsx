@@ -63,6 +63,7 @@ import {
   useBrowserPanel,
 } from "@/modules/browser";
 import {
+  AiViewerArea,
   LeftEditorArea,
   LeftPanelEmpty,
   LeftPanelSwitcher,
@@ -104,6 +105,7 @@ import {
   clearFocusedTerminal,
   disposeSession,
   findLeafCwd,
+  findLeafResume,
   hasLeaf,
   leafHasForegroundProcess,
   leafIds,
@@ -991,6 +993,18 @@ export default function App() {
     [activeId, livePaneBounds, swapActivePaneInDirection],
   );
 
+  // The Ai Viewer resolves a pane's anchored Claude session through the
+  // ref, so the callback stays stable and the viewer never re-renders on
+  // unrelated tab churn.
+  const resolveLeafResume = useCallback((leafId: number): string | null => {
+    for (const t of tabsRef.current) {
+      if (t.kind !== "terminal") continue;
+      const anchored = findLeafResume(t.paneTree, leafId);
+      if (anchored !== undefined) return anchored;
+    }
+    return null;
+  }, []);
+
   const handleCloseTabOrPane = useCallback(() => {
     // Cmd+W follows the focused pane like every other keyboard action; a
     // terminal with a live process in the center must not die to a close
@@ -1703,12 +1717,11 @@ export default function App() {
                       onSetMarkdownView={setMarkdownView}
                     />
                   </div>
+                  {/* Read-only, so unmounting when hidden is free (no user
+                      state to lose) and stops the terminal buffer polling. */}
                   {leftPanel.mode === "ai-viewer" ? (
                     <div className="absolute inset-0 bg-card">
-                      <LeftPanelEmpty
-                        title="No AI is working right now"
-                        hint="Running agents show up here, one lane each, read only."
-                      />
+                      <AiViewerArea resolveLeafResume={resolveLeafResume} />
                     </div>
                   ) : null}
                 </div>

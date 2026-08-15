@@ -89,6 +89,29 @@ faixas horizontais, uma por instancia. Aceleracao por GPU se houver ganho real.
    instancia. A faixa de um agente de terminal mostra a **saida ao vivo daquele
    terminal**, rotulada como tal.
 
+> **Item 9 corrigido pelo autor (Rodrigo, 2026-08-15 11:21), apos ver o E5 no
+> ar (05.jpg):** espelhar a saida do terminal e inutil, "isso eu estou vendo
+> tambem". O alvo verdadeiro e mostrar o que a TUI NAO mostra: os arquivos que
+> o agente esta lendo, editando e escrevendo, abertos ao lado com o conteudo.
+> A reescrita da auditoria ("a saida do terminal e onde ele trabalha") partiu
+> de "dado que existe" mas errou o alvo humano. Fonte de dado que existe e
+> satisfaz o alvo: o transcript JSONL da sessao do Claude Code
+> (`~/.claude/projects/<proj>/<sessao>.jsonl`), que o Micah ja ancora por pane
+> (`leaf.resume`) e que o harness escreve independente do modelo por tras
+> (vale para GLM via base URL). Cada Read/Edit/Write entra la com caminho e
+> conteudo integrais. Redacao vigente do criterio 9 para agentes de terminal:
+> a faixa de um agente de terminal com sessao ancorada mostra os arquivos que
+> ele le/edita/escreve (Read com o trecho lido, Edit com o par velho/novo,
+> Write com o conteudo), tailados do transcript; o espelho do buffer do
+> terminal fica apenas como fallback quando nao ha transcript (agente sem
+> ancora ou sem JSONL). Implementacao: comando Rust `claude_session_tail`
+> (tail por offset, confinado a `~/.claude/projects`, session id uuid-gated,
+> chunk 256 KiB, UTF-8 partido na borda deferido; `fs/claude_session.rs`, 7
+> testes), parser puro `claudeSessionOps.ts` (JSONL -> eventos de lane, 13
+> testes), `useClaudeSessionFeed.ts` (poll 700 ms so com o viewer montado,
+> catch-up rapido, probe lento enquanto o arquivo nao existe) e
+> `AiViewerArea` com `resolveLeafResume` vindo do App.
+>
 > **Itens 8 e 9 reescritos apos a auditoria do plano, com o motivo escrito.** A
 > redacao original ("mostra o arquivo alvo de qualquer instancia") era
 > **insatisfazivel**: `AgentSession` (`agents/lib/types.ts:12-26`) nao carrega

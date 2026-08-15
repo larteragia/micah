@@ -1,4 +1,4 @@
-mod agent_detect;
+pub(crate) mod agent_detect;
 mod da_filter;
 mod session;
 pub(crate) mod shell_init;

@@ -1,6 +1,7 @@
 import { useChat, type UIMessage } from "@ai-sdk/react";
 import type { ToolUIPart, UIMessagePart } from "ai";
 import { useEffect, useMemo, useRef } from "react";
+import { useAiViewerStore } from "@/modules/left-panel/lib/useAiViewerStore";
 import { native } from "../lib/native";
 import { checkReadable } from "../lib/security";
 import { resolvePath } from "../tools/tools";
@@ -124,6 +125,62 @@ function Bridge({
     if (approvalsPending > 0) openMini();
   }, [approvalsPending, openMini]);
 
+  // ---- Ai Viewer feed ------------------------------------------------------
+  // This bridge is the chat's single subscriber; it forwards streaming
+  // file-mutation inputs to the viewer's light store so the Ai Viewer never
+  // has to subscribe to `messages` itself (a second subscriber re-renders on
+  // every token - the most expensive path in the app). Only the LAST message
+  // can be streaming, so scanning just it keeps the per-token cost flat.
+  useEffect(() => {
+    const last = messages[messages.length - 1];
+    if (last?.role !== "assistant") return;
+    const { publish, finish } = useAiViewerStore.getState();
+    for (const part of last.parts as AnyPart[]) {
+      const type = (part as { type?: string }).type;
+      if (
+        type !== "tool-write_file" &&
+        type !== "tool-edit" &&
+        type !== "tool-multi_edit"
+      )
+        continue;
+      const p = part as ToolPartLike & { toolCallId?: string };
+      const toolCallId = p.toolCallId;
+      if (!toolCallId) continue;
+      const state = (p as { state?: string }).state ?? "";
+      if (state !== "input-streaming") {
+        finish(toolCallId);
+        continue;
+      }
+      // The input is a partially parsed JSON object while streaming; the
+      // path arrives first, and until it does there is nothing to label.
+      const input = (p.input ?? {}) as Record<string, unknown>;
+      const path = typeof input.path === "string" ? input.path : "";
+      if (!path) continue;
+      if (type === "tool-write_file") {
+        publish({
+          toolCallId,
+          path,
+          kind: "write",
+          content: typeof input.content === "string" ? input.content : "",
+        });
+      } else {
+        const mutation = extractFileMutation(part);
+        if (mutation?.derive.kind === "edits") {
+          publish({
+            toolCallId,
+            path,
+            kind: "edit",
+            edits: mutation.derive.edits.map((e) => ({
+              old_string: e.old_string,
+              new_string: e.new_string,
+            })),
+          });
+        }
+      }
+    }
+  }, [messages]);
+
+
   // ---- AI diff tab management ----------------------------------------------
   // We track which approvalIds have already opened a tab so re-renders don't
   // open duplicates. Reset when the session changes.
@@ -132,6 +189,7 @@ function Bridge({
   useEffect(() => {
     openedRef.current = new Set();
     fileMutationFingerprintRef.current = "";
+    useAiViewerStore.getState().clear();
   }, [sessionId]);
 
   // Cheap fingerprint of file-mutation tool parts only. The diff-tab effect
