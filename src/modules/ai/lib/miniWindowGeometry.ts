@@ -2,7 +2,8 @@ export type Geom = { x: number; y: number; w: number; h: number };
 export type Viewport = { vw: number; vh: number };
 export type ResizeDir = "n" | "s" | "e" | "w" | "ne" | "nw" | "se" | "sw";
 
-export const MIN_W = 400;
+// Matches SIDEBAR_MIN_WIDTH so the chat can narrow down to sidebar width.
+export const MIN_W = 220;
 export const MIN_H = 280;
 
 const MARGIN_X = 16;

@@ -23,7 +23,7 @@ describe("defaultGeom", () => {
   });
 
   it("never goes below the minimum size on a tiny viewport", () => {
-    const g = defaultGeom({ vw: 320, vh: 200 });
+    const g = defaultGeom({ vw: 200, vh: 200 });
     expect(g.w).toBe(MIN_W);
     expect(g.h).toBe(MIN_H);
   });
