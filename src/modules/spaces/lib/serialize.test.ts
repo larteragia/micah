@@ -199,4 +199,48 @@ describe("hydrateTabs", () => {
       "README.md",
     ]);
   });
+
+  it("round-trips the pane marker and leaves workspace tabs unmarked", () => {
+    const tabs: Tab[] = [
+      term({ id: 1 }),
+      {
+        id: 3,
+        kind: "editor",
+        spaceId: "s1",
+        pane: "left",
+        title: "x",
+        path: "/a/x.ts",
+        dirty: false,
+        preview: false,
+      },
+      {
+        id: 5,
+        kind: "editor",
+        spaceId: "s1",
+        title: "y",
+        path: "/a/y.ts",
+        dirty: false,
+        preview: false,
+      },
+    ];
+    const serialized = serializeTabs(tabs);
+    expect(serialized[1]).toMatchObject({ kind: "editor", pane: "left" });
+    expect(serialized[0]).not.toHaveProperty("pane");
+    expect(serialized[2]).not.toHaveProperty("pane");
+
+    const restored = hydrateTabs(serialized, "s1", counter());
+    expect(restored[1].pane).toBe("left");
+    expect(restored[0]).not.toHaveProperty("pane");
+    expect(restored[2]).not.toHaveProperty("pane");
+  });
+
+  it("drops a poisoned pane value on hydrate", () => {
+    for (const bad of ["right", "LEFT", 1, {}, ""]) {
+      const serialized = [
+        { kind: "editor", path: "/a/x.ts", pane: bad },
+      ] as unknown as SerializedTab[];
+      const [restored] = hydrateTabs(serialized, "s1", counter());
+      expect(restored).not.toHaveProperty("pane");
+    }
+  });
 });

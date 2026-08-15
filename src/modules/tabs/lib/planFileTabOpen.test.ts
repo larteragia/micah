@@ -104,6 +104,116 @@ describe("planFileTabOpen", () => {
   });
 });
 
+function leftEditor(
+  id: number,
+  path: string,
+  spaceId: string,
+  preview: boolean,
+): EditorTab {
+  return { ...editor(id, path, spaceId, preview), pane: "left" };
+}
+
+describe("planFileTabOpen per pane", () => {
+  it("a file already open in the workspace still opens in the left panel", () => {
+    const tabs: Tab[] = [terminal, editor(3, "/repo/main.rs", "one", false)];
+
+    const plan = planFileTabOpen(
+      tabs,
+      "/repo/main.rs",
+      true,
+      "one",
+      () => 5,
+      "left",
+    );
+
+    expect(plan.tabId).toBe(5);
+    expect(plan.tabs).toContainEqual(
+      expect.objectContaining({ id: 5, pane: "left", path: "/repo/main.rs" }),
+    );
+    expect(plan.tabs).toContainEqual(
+      expect.objectContaining({ id: 3, path: "/repo/main.rs" }),
+    );
+  });
+
+  it("dedupes within the left pane only", () => {
+    const tabs: Tab[] = [terminal, leftEditor(3, "/repo/main.rs", "one", false)];
+
+    const plan = planFileTabOpen(
+      tabs,
+      "/repo/main.rs",
+      true,
+      "one",
+      () => {
+        throw new Error("should not allocate");
+      },
+      "left",
+    );
+
+    expect(plan).toEqual({ tabs, tabId: 3 });
+  });
+
+  it("keeps one preview slot per pane", () => {
+    const workspacePreview = editor(3, "/repo/old.ts", "one", true);
+    const tabs: Tab[] = [terminal, workspacePreview];
+
+    const plan = planFileTabOpen(
+      tabs,
+      "/repo/new.ts",
+      false,
+      "one",
+      () => 5,
+      "left",
+    );
+
+    expect(plan.tabs).toContain(workspacePreview);
+    expect(plan.tabs).toContainEqual(
+      expect.objectContaining({
+        id: 5,
+        pane: "left",
+        path: "/repo/new.ts",
+        preview: true,
+      }),
+    );
+  });
+
+  it("replaces the left preview slot with the next left preview", () => {
+    const tabs: Tab[] = [terminal, leftEditor(3, "/repo/old.ts", "one", true)];
+
+    const plan = planFileTabOpen(
+      tabs,
+      "/repo/new.ts",
+      false,
+      "one",
+      () => 5,
+      "left",
+    );
+
+    expect(plan.tabs).not.toContainEqual(
+      expect.objectContaining({ path: "/repo/old.ts" }),
+    );
+    expect(plan.tabs).toContainEqual(
+      expect.objectContaining({ id: 5, pane: "left", preview: true }),
+    );
+  });
+
+  it("pinning promotes only the same-pane preview", () => {
+    const workspacePreview = editor(3, "/repo/main.rs", "one", true);
+    const tabs: Tab[] = [terminal, workspacePreview];
+
+    const plan = planFileTabOpen(
+      tabs,
+      "/repo/main.rs",
+      true,
+      "one",
+      () => 5,
+      "left",
+    );
+
+    expect(plan.tabId).toBe(5);
+    expect(plan.tabs).toContain(workspacePreview);
+  });
+});
+
 describe("planMarkdownTabOpen", () => {
   it("reuses markdown tabs only within the requested space", () => {
     const tabs: Tab[] = [

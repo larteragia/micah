@@ -56,4 +56,41 @@ describe("planSpaceRemoval", () => {
     expect(plan?.activeId).toBe(100);
     expect(plan?.disposeLeafIds).toEqual([10, 20]);
   });
+
+  it("left-pane tabs alone do not satisfy the fallback-space invariant", () => {
+    const left = {
+      id: 5,
+      kind: "editor",
+      spaceId: "b",
+      pane: "left",
+      title: "x",
+      path: "/x.ts",
+      dirty: false,
+      preview: false,
+    } as Tab;
+    const tabs = [term(1, "a"), left];
+    const plan = planSpaceRemoval(tabs, 1, "a", "b", "/work", counterFrom(100));
+    const spawned = plan?.tabs.find((t) => t.id === 100) as TerminalTab;
+    expect(spawned).toBeDefined();
+    expect(spawned.spaceId).toBe("b");
+    expect(spawned.pane).toBeUndefined();
+    expect(plan?.activeId).toBe(100);
+    expect(plan?.tabs).toContain(left);
+  });
+
+  it("never repoints active onto a left-pane tab", () => {
+    const left = {
+      id: 5,
+      kind: "editor",
+      spaceId: "b",
+      pane: "left",
+      title: "x",
+      path: "/x.ts",
+      dirty: false,
+      preview: false,
+    } as Tab;
+    const tabs = [term(1, "a"), term(2, "b"), left];
+    const plan = planSpaceRemoval(tabs, 1, "a", "b", undefined, counterFrom(100));
+    expect(plan?.activeId).toBe(2);
+  });
 });

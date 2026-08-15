@@ -45,4 +45,20 @@ describe("reorderTabsByGap", () => {
     const tabs = [term(1, "a"), term(2, "a")];
     expect(reorderTabsByGap(tabs, 99, 1)).toBe(tabs);
   });
+
+  it("gap math ignores left-pane tabs interleaved in the space", () => {
+    const left = {
+      id: 9,
+      kind: "editor",
+      spaceId: "a",
+      pane: "left",
+      title: "x",
+      path: "/x.ts",
+      dirty: false,
+      preview: false,
+    } as Tab;
+    // Strip the user sees: [1, 2]. Dragging 1 past 2 lands on gap 2.
+    const tabs = [left, term(1, "a"), term(2, "a")];
+    expect(ids(reorderTabsByGap(tabs, 1, 2))).toEqual([9, 2, 1]);
+  });
 });

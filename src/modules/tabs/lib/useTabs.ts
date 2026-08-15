@@ -25,8 +25,18 @@ import { useCallback, useEffect, useRef, useState } from "react";
 // Matches the renderer slot pool size — over this we'd evict an active leaf.
 export const MAX_PANES_PER_TAB = 4;
 
+/** Which panel hosts a tab. Absent everywhere means "workspace" (the center
+ * panel), so state serialized before panes existed stays valid as-is. */
+export type Pane = "workspace" | "left";
+
+export function tabPane(tab: { pane?: "left" }): Pane {
+  return tab.pane ?? "workspace";
+}
+
 type TabBase = {
   spaceId: string;
+  /** Only ever "left"; workspace tabs stay unmarked (see Pane). */
+  pane?: "left";
   /** Restored from disk, not yet activated: rendered as a placeholder, not mounted. */
   cold?: boolean;
 };
@@ -152,6 +162,7 @@ export type GitDiffOpenInput = {
 export type OpenFileTabOptions = {
   spaceId?: string;
   activate?: boolean;
+  pane?: Pane;
 };
 
 export function planMarkdownTabOpen(
@@ -159,12 +170,14 @@ export function planMarkdownTabOpen(
   path: string,
   spaceId: string,
   allocId: () => number,
+  pane: Pane = "workspace",
 ): { tabs: Tab[]; tabId: number } {
   const pathKey = path.replace(/\\/g, "/");
   const existing = tabs.find(
     (tab) =>
       tab.kind === "markdown" &&
       tab.spaceId === spaceId &&
+      tabPane(tab) === pane &&
       tab.path.replace(/\\/g, "/") === pathKey,
   );
   if (existing) return { tabs, tabId: existing.id };
@@ -177,6 +190,7 @@ export function planMarkdownTabOpen(
         id: tabId,
         kind: "markdown",
         spaceId,
+        ...(pane === "left" && { pane: "left" as const }),
         title: basename(path),
         path,
       },
@@ -191,12 +205,15 @@ export function planFileTabOpen(
   pin: boolean,
   spaceId: string,
   allocId: () => number,
+  pane: Pane = "workspace",
 ): { tabs: Tab[]; tabId: number } {
+  // Dedupe and the preview slot are scoped per (space, pane): the same file
+  // open in the workspace must still open in the left panel, and vice versa.
+  const inScope = (tab: Tab): tab is EditorTab =>
+    tab.kind === "editor" && tab.spaceId === spaceId && tabPane(tab) === pane;
+
   if (pin) {
-    const existing = tabs.find(
-      (tab) =>
-        tab.kind === "editor" && tab.spaceId === spaceId && tab.path === path,
-    );
+    const existing = tabs.find((tab) => inScope(tab) && tab.path === path);
     if (existing?.kind === "editor") {
       return {
         tabs: existing.preview
@@ -216,6 +233,7 @@ export function planFileTabOpen(
           id: tabId,
           kind: "editor",
           spaceId,
+          ...(pane === "left" && { pane: "left" as const }),
           title: basename(path),
           path,
           dirty: false,
@@ -227,31 +245,22 @@ export function planFileTabOpen(
   }
 
   const persistent = tabs.find(
-    (tab) =>
-      tab.kind === "editor" &&
-      tab.spaceId === spaceId &&
-      tab.path === path &&
-      !tab.preview,
+    (tab) => inScope(tab) && tab.path === path && !tab.preview,
   );
   if (persistent) return { tabs, tabId: persistent.id };
 
   const existingPreview = tabs.find(
-    (tab) =>
-      tab.kind === "editor" &&
-      tab.spaceId === spaceId &&
-      tab.path === path &&
-      tab.preview,
+    (tab) => inScope(tab) && tab.path === path && tab.preview,
   );
   if (existingPreview) return { tabs, tabId: existingPreview.id };
 
-  const previewIndex = tabs.findIndex(
-    (tab) => tab.kind === "editor" && tab.spaceId === spaceId && tab.preview,
-  );
+  const previewIndex = tabs.findIndex((tab) => inScope(tab) && tab.preview);
   const tabId = allocId();
   const tab: EditorTab = {
     id: tabId,
     kind: "editor",
     spaceId,
+    ...(pane === "left" && { pane: "left" as const }),
     title: basename(path),
     path,
     dirty: false,
@@ -280,32 +289,41 @@ function titleFromUrl(url: string): string {
 
 export const DEFAULT_SPACE_ID = "default";
 
-// Returns the tab at position `idx` within the given space, or undefined when
-// idx is out of range or no matching space tab exists.
+// Returns the tab at position `idx` within the given space and pane, or
+// undefined when idx is out of range or no matching tab exists. Cmd+1..9
+// always addresses the workspace strip, never the left panel.
 export function pickTabBySpaceIndex(
   tabs: Tab[],
   idx: number,
   spaceId: string,
+  pane: Pane = "workspace",
 ): Tab | undefined {
-  const pool = tabs.filter((t) => t.spaceId === spaceId);
+  const pool = tabs.filter((t) => t.spaceId === spaceId && tabPane(t) === pane);
   return pool[idx];
 }
 
-// Next active after close, scoped to the closing tab's space. null = last tab of
-// its space, which callers treat as "refuse to close".
+// Next active after close, scoped to the closing tab's space AND pane. null =
+// last tab of its pool. Every caller today reads null as "refuse to close"
+// (a left-panel editor must not count as the surviving tab of the workspace);
+// letting the LEFT pool empty out instead of refusing is wiring the callers
+// still owe (E2b) - this function only reports "no fallback exists".
 export function nextActiveInSpace(
   tabs: Tab[],
   closingId: number,
 ): number | null {
   const closing = tabs.find((t) => t.id === closingId);
   if (!closing) return null;
-  const sameSpace = tabs.filter((t) => t.spaceId === closing.spaceId);
+  const sameSpace = tabs.filter(
+    (t) => t.spaceId === closing.spaceId && tabPane(t) === tabPane(closing),
+  );
   if (sameSpace.length <= 1) return null;
   const idx = sameSpace.findIndex((t) => t.id === closingId);
   return (sameSpace[idx - 1] ?? sameSpace[idx + 1]).id;
 }
 
-// Gap index is relative to the space's own strip, including the dragged tab.
+// Gap index is relative to the strip of the dragged tab's own space and pane,
+// including the dragged tab. The rendered strip and this pool must agree, or
+// gap arithmetic lands on the wrong neighbor.
 export function reorderTabsByGap(
   tabs: Tab[],
   fromId: number,
@@ -313,7 +331,9 @@ export function reorderTabsByGap(
 ): Tab[] {
   const moved = tabs.find((t) => t.id === fromId);
   if (!moved) return tabs;
-  const sameSpace = tabs.filter((t) => t.spaceId === moved.spaceId);
+  const sameSpace = tabs.filter(
+    (t) => t.spaceId === moved.spaceId && tabPane(t) === tabPane(moved),
+  );
   const spaceFrom = sameSpace.findIndex((t) => t.id === fromId);
   let spaceTarget = toGapIndex > spaceFrom ? toGapIndex - 1 : toGapIndex;
   spaceTarget = Math.max(0, Math.min(spaceTarget, sameSpace.length - 1));
@@ -467,12 +487,16 @@ export function planSpaceRemoval(
     .flatMap((t) => leafIds((t as TerminalTab).paneTree));
   let next = tabs.filter((t) => t.spaceId !== spaceId);
   let activeId = currentActiveId;
-  if (!next.some((t) => t.spaceId === fallbackSpaceId)) {
+  // The invariant is about the WORKSPACE strip: left-panel tabs alone must not
+  // satisfy it, or the center would render empty with a dangling active id.
+  const inFallbackWorkspace = (t: Tab) =>
+    t.spaceId === fallbackSpaceId && tabPane(t) === "workspace";
+  if (!next.some(inFallbackWorkspace)) {
     const tabId = allocId();
     next = [...next, coldTerminalTab(tabId, allocId(), fallbackSpaceId, fallbackCwd)];
     activeId = tabId;
   } else if (!next.some((t) => t.id === currentActiveId)) {
-    const inFallback = next.filter((t) => t.spaceId === fallbackSpaceId);
+    const inFallback = next.filter(inFallbackWorkspace);
     activeId = inFallback[inFallback.length - 1].id;
   }
   return { tabs: next, disposeLeafIds, activeId };
@@ -757,6 +781,7 @@ export function useTabs(initial?: Partial<TerminalTab>) {
         pin,
         targetSpaceId,
         () => nextIdRef.current++,
+        options.pane ?? "workspace",
       );
       tabsRef.current = plan.tabs;
       setTabs(plan.tabs);
@@ -877,21 +902,25 @@ export function useTabs(initial?: Partial<TerminalTab>) {
   // batch that opens a markdown file before a regular one (multi-file "Open
   // With") would otherwise have the queued markdown update clobbered by
   // openFileTab's setTabs(plan.tabs), which is built from the stale ref.
-  const newMarkdownTab = useCallback((path: string) => {
-    const curr = tabsRef.current;
-    const plan = planMarkdownTabOpen(
-      curr,
-      path,
-      activeSpaceIdRef.current,
-      () => nextIdRef.current++,
-    );
-    if (plan.tabs !== curr) {
-      tabsRef.current = plan.tabs;
-      setTabs(plan.tabs);
-    }
-    setActiveId(plan.tabId);
-    return plan.tabId;
-  }, []);
+  const newMarkdownTab = useCallback(
+    (path: string, pane: Pane = "workspace") => {
+      const curr = tabsRef.current;
+      const plan = planMarkdownTabOpen(
+        curr,
+        path,
+        activeSpaceIdRef.current,
+        () => nextIdRef.current++,
+        pane,
+      );
+      if (plan.tabs !== curr) {
+        tabsRef.current = plan.tabs;
+        setTabs(plan.tabs);
+      }
+      setActiveId(plan.tabId);
+      return plan.tabId;
+    },
+    [],
+  );
 
   const setOverrideLanguage = useCallback((id: number, lang: string | null) => {
     setTabs((curr) =>
@@ -931,6 +960,7 @@ export function useTabs(initial?: Partial<TerminalTab>) {
               id: t.id,
               kind: "markdown" as const,
               spaceId: t.spaceId,
+              ...(t.pane === "left" && { pane: "left" as const }),
               cold: t.cold,
               title: t.title,
               path: t.path,

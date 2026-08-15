@@ -15,7 +15,15 @@ export type SpaceMeta = {
 
 export type SpaceState = {
   tabs: SerializedTab[];
+  /** Index over ALL serializable tabs of the space, both panes - that is what
+   * useSpacePersistence writes and useSpacesBoot reads today. Splitting it per
+   * pane is E2b work, in lockstep on both sides. */
   activeTabIndex: number;
+  /** Per-pane active indexes; optional so pre-pane state stays valid and old
+   * binaries simply ignore it. Indexes count serializable tabs of that pane.
+   * Not written yet (E2b): saveState replaces the whole key, so the writer in
+   * useSpacePersistence must include this field in the same literal. */
+  activeTabIndexByPane?: { workspace?: number; left?: number };
 };
 
 const STORE_PATH = "micah-spaces.json";

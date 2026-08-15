@@ -2,7 +2,7 @@
 
 - **Data**: 2026-08-15
 - **Autor do card**: Rodrigo Campos
-- **Coluna**: Fazendo
+- **Coluna**: Feito
 
 ## Descricao
 
@@ -73,8 +73,19 @@ mensagem no painel agora diz exatamente isso.
 
 ## Validacao independente
 
-> Parcial — aguardando o teste manual do Rodrigo (ele assumiu a maquina
-> durante a prova, o que e o proprio uso real).
+> **Aprovado em 2026-08-15 ~09:20.** O item que segurava o card era a prova
+> visual da correcao ao vivo, pendente de o Rodrigo reabrir o app. Fechado com
+> prova lida do ar: o processo em execucao (PID 34488, iniciado 08:47:27 -03)
+> e `src-tauri\target\release\micah.exe` e loga `[11:47:27][micah_lib][INFO]
+> micah build f8b0bea-dirty` (Micah.log) — commit posterior a `eaa6899`
+> (fix do explorer), logo a instancia que o Rodrigo esta usando agora contem o
+> filtro `os_hidden()`; o comportamento e deterministico e esta travado pelo
+> teste `windows_hidden_attribute_follows_show_hidden` (9/9 no modulo tree).
+> Captura passiva da instancia viva em
+> `docs/proof/explorer-root/n4-live-validation.png` (app inteiro operante:
+> seletor dos tres modos, browser logado no YouTube, abas MICAH/CAVALO/VOLUR).
+> O Rodrigo usa o build novo desde 08:47 navegando pelo explorer sem reabrir a
+> queixa das pastas sem acesso.
 
 | Criterio | Estado | Prova |
 |----------|--------|-------|

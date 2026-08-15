@@ -16,7 +16,9 @@ export type SerializedNode =
   | { kind: "leaf"; cwd?: string; active?: boolean; resume?: string }
   | { kind: "split"; dir: SplitDir; children: SerializedNode[] };
 
-export type SerializedTab =
+// `pane` is optional on disk so state written before panes existed hydrates
+// unchanged and old binaries reading new state simply ignore the field.
+export type SerializedTab = (
   | {
       kind: "terminal";
       tree: SerializedNode;
@@ -25,7 +27,8 @@ export type SerializedTab =
     }
   | { kind: "editor"; path: string }
   | { kind: "preview"; url: string }
-  | { kind: "markdown"; path: string };
+  | { kind: "markdown"; path: string }
+) & { pane?: "left" };
 
 function basename(path: string): string {
   const parts = path.split(/[\\/]/).filter(Boolean);
@@ -71,6 +74,7 @@ export function isSerializableTab(tab: Tab): boolean {
 
 function serializeTab(tab: Tab): SerializedTab | null {
   if (!isSerializableTab(tab)) return null;
+  const pane = tab.pane === "left" ? { pane: "left" as const } : {};
   switch (tab.kind) {
     case "terminal":
       return {
@@ -78,13 +82,14 @@ function serializeTab(tab: Tab): SerializedTab | null {
         tree: serializeNode(tab.paneTree, tab.activeLeafId),
         ...(tab.blocks && { blocks: true }),
         ...(tab.customTitle !== undefined && { customTitle: tab.customTitle }),
+        ...pane,
       };
     case "editor":
-      return { kind: "editor", path: tab.path };
+      return { kind: "editor", path: tab.path, ...pane };
     case "preview":
-      return { kind: "preview", url: tab.url };
+      return { kind: "preview", url: tab.url, ...pane };
     case "markdown":
-      return { kind: "markdown", path: tab.path };
+      return { kind: "markdown", path: tab.path, ...pane };
     default:
       return null;
   }
@@ -151,6 +156,9 @@ function hydrateTab(
   spaceId: string,
   allocId: () => number,
 ): Tab | null {
+  // Strict: only the exact literal survives; any other value in a hand-edited
+  // or poisoned spaces.json falls back to the workspace.
+  const pane = s.pane === "left" ? { pane: "left" as const } : {};
   switch (s.kind) {
     case "terminal": {
       const { tree, activeLeafId, firstLeafCwd } = hydrateTree(s.tree, allocId);
@@ -161,6 +169,7 @@ function hydrateTab(
         id: allocId(),
         kind: "terminal",
         spaceId,
+        ...pane,
         cold: true,
         title,
         cwd: firstLeafCwd,
@@ -175,6 +184,7 @@ function hydrateTab(
         id: allocId(),
         kind: "editor",
         spaceId,
+        ...pane,
         cold: true,
         title: basename(s.path),
         path: s.path,
@@ -186,6 +196,7 @@ function hydrateTab(
         id: allocId(),
         kind: "preview",
         spaceId,
+        ...pane,
         cold: true,
         title: titleFromUrl(s.url),
         url: s.url,
@@ -195,6 +206,7 @@ function hydrateTab(
         id: allocId(),
         kind: "markdown",
         spaceId,
+        ...pane,
         cold: true,
         title: basename(s.path),
         path: s.path,

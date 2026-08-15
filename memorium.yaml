@@ -131,6 +131,33 @@ verificacao:
     reportando sucesso.
 
 rondas_pdi:
+  - card: explorer-raiz-livre-nas-2026-08-15
+    titulo: "Explorer com raiz livre: navegar ate o NAS, com a lupa junto"
+    data: 2026-08-15T09:20:00-03:00
+    resultado: "done — header do explorer vira navegador (Home/subir/drives), raiz troca para Z: e lista o NAS, busca roda sem congelar a UI (7 comandos fs em spawn_blocking), junctions Hidden+System do perfil somem da arvore (os_hidden)"
+    prova:
+      artefato: "micah build f8b0bea-dirty (posterior a eaa6899, o commit do fix do explorer; o -dirty era o WIP das abas, commitado em 54efdef)"
+      verificado_em: "src-tauri/target/release/micah.exe em execucao no zig-laptop, PID 34488 iniciado 2026-08-15T08:47:27-03:00"
+      saida: "[2026-08-15][11:47:27][micah_lib][INFO] micah build f8b0bea-dirty (Micah.log da instancia viva) + captura docs/proof/explorer-root/n4-live-validation.png"
+    achados:
+      - categoria: "Falha externa"
+        etapa: 1
+        evidencia: "fs_list_drives sincrono sondava A:..Z: com is_dir() na main thread; drive de rede morto trava o redirector SMB por dezenas de segundos — trocado por GetLogicalDrives (bitmask local) + comando async"
+      - categoria: "Concorrencia"
+        etapa: 2
+        evidencia: "7 comandos de fs sincronos rodavam inline no handler de IPC (janela Not Responding em busca no NAS) e o cancelamento por geracao do grep interativo era inerte; viraram async/spawn_blocking e generation virou Arc<AtomicU64> com bump antes do spawn"
+      - categoria: "Volume"
+        etapa: 2
+        evidencia: "walk do Z:\\ inteiro via SMB/Tailscale medido em ~297 entradas/s; teto de 50k trunca em ~3min e 'No matches' truncado nao e prova de ausencia — mensagem de truncamento reescrita"
+      - categoria: "Estado e persistencia"
+        etapa: 2
+        evidencia: "usar o retorno canonico do authorize como override trocava Z:/ pela grafia UNC (duas grafias do mesmo lugar, quebra 'subir'); autoriza pelo canonico mas o override guarda a grafia escolhida"
+      - categoria: "Rollback"
+        etapa: 2
+        evidencia: "HEAD f32fe05 nao era autocontido (lib.rs referenciava fs_list_drives que so existia no worktree); o commit do card incluiu o WIP do Rodrigo"
+      - categoria: "Entrada vazia ou suja"
+        etapa: 3
+        evidencia: "10 junctions Hidden+System+ReparsePoint do perfil (ACL de negacao por design) apareciam na arvore porque tree.rs so filtrava ponto-prefixo; os_hidden() passa a respeitar FILE_ATTRIBUTE_HIDDEN, teste windows_hidden_attribute_follows_show_hidden trava a invariante"
   - card: browser-pdi-2026-08-14
     titulo: "PDI do Browser: largura + favoritos + sanduiche (COM liberado)"
     data: 2026-08-14T23:50:00-03:00

@@ -35,3 +35,26 @@ describe("pickTabBySpaceIndex", () => {
     expect(pickTabBySpaceIndex(tabs, 0, "c")).toBeUndefined();
   });
 });
+
+describe("pickTabBySpaceIndex per pane", () => {
+  const leftTab = {
+    id: 4,
+    kind: "editor",
+    spaceId: "b",
+    pane: "left",
+    title: "x",
+    path: "/x.ts",
+    dirty: false,
+    preview: false,
+  } as Tab;
+  const tabs = [term(1, "a"), term(2, "b"), leftTab, term(3, "b")];
+
+  it("Cmd+2 in space B skips the left tab sitting between terminals", () => {
+    expect(pickTabBySpaceIndex(tabs, 1, "b")?.id).toBe(3);
+  });
+
+  it("the left pool is addressable on its own", () => {
+    expect(pickTabBySpaceIndex(tabs, 0, "b", "left")?.id).toBe(4);
+    expect(pickTabBySpaceIndex(tabs, 1, "b", "left")).toBeUndefined();
+  });
+});
