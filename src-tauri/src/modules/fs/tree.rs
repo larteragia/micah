@@ -26,6 +26,26 @@ pub struct DirEntry {
     pub gitignored: bool,
 }
 
+// Windows compat junctions ("My Documents", "Application Data", ...) carry the
+// Hidden attribute and a deny ACL: listing them fails with access denied. File
+// Explorer hides them via that attribute, so Hidden counts as hidden here too.
+#[cfg(windows)]
+fn os_hidden(entry: &std::fs::DirEntry) -> bool {
+    use std::os::windows::fs::MetadataExt;
+    entry
+        .metadata()
+        .map(|m| {
+            m.file_attributes() & windows_sys::Win32::Storage::FileSystem::FILE_ATTRIBUTE_HIDDEN
+                != 0
+        })
+        .unwrap_or(false)
+}
+
+#[cfg(not(windows))]
+fn os_hidden(_entry: &std::fs::DirEntry) -> bool {
+    false
+}
+
 // Whether `dir` is inside a git repo. Walks up only; never descends into
 // siblings, so it does not touch protected macOS folders (Desktop, ...).
 fn in_git_repo(dir: &Path) -> bool {
@@ -156,6 +176,9 @@ pub fn fs_read_dir_blocking(
         .filter_map(Result::ok)
         .filter_map(|entry| {
             let name = entry.file_name().into_string().ok()?;
+            if !show_hidden && (name.starts_with('.') || os_hidden(&entry)) {
+                return None;
+            }
 
             // `metadata()` follows symlinks → it returns the target's stat in
             // one syscall (file_type + size + mtime all derived from it). We
@@ -174,10 +197,6 @@ pub fn fs_read_dir_blocking(
             } else {
                 EntryKind::File
             };
-
-            if name.starts_with('.') && !show_hidden {
-                return None;
-            }
 
             let size = meta.len();
             let mtime = meta
@@ -255,6 +274,7 @@ pub fn list_subdirs_blocking(
 
     let mut dirs: Vec<String> = read
         .filter_map(Result::ok)
+        .filter(|entry| show_hidden || !os_hidden(entry))
         .filter(|entry| match entry.file_type() {
             Ok(t) if t.is_dir() => true,
             Ok(t) if t.is_symlink() => std::fs::metadata(entry.path())
@@ -327,6 +347,53 @@ mod tests {
     #[test]
     fn drives_list_is_empty_off_windows() {
         assert!(super::list_drives_blocking().is_empty());
+    }
+
+    // Locks the invariant behind the profile compat junctions ("My Documents",
+    // ...): entries with the Windows Hidden attribute follow `show_hidden`.
+    #[cfg(windows)]
+    #[test]
+    fn windows_hidden_attribute_follows_show_hidden() {
+        use std::os::windows::ffi::OsStrExt;
+        use windows_sys::Win32::Storage::FileSystem::{
+            SetFileAttributesW, FILE_ATTRIBUTE_HIDDEN,
+        };
+
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("visible.txt"), "").unwrap();
+        std::fs::write(dir.path().join("hidden.txt"), "").unwrap();
+        std::fs::create_dir(dir.path().join("vdir")).unwrap();
+        std::fs::create_dir(dir.path().join("hdir")).unwrap();
+        for name in ["hidden.txt", "hdir"] {
+            let wide: Vec<u16> = dir
+                .path()
+                .join(name)
+                .as_os_str()
+                .encode_wide()
+                .chain([0])
+                .collect();
+            assert_ne!(unsafe { SetFileAttributesW(wide.as_ptr(), FILE_ATTRIBUTE_HIDDEN) }, 0);
+        }
+
+        let root = dir.path().to_string_lossy().into_owned();
+        let names = |show_hidden: bool| -> Vec<String> {
+            super::fs_read_dir_blocking(root.clone(), show_hidden, None, None)
+                .unwrap()
+                .into_iter()
+                .map(|e| e.name)
+                .collect()
+        };
+        assert_eq!(names(false), vec!["vdir", "visible.txt"]);
+        assert_eq!(names(true), vec!["hdir", "vdir", "hidden.txt", "visible.txt"]);
+
+        assert_eq!(
+            super::list_subdirs_blocking(root.clone(), false, None).unwrap(),
+            vec!["vdir"],
+        );
+        assert_eq!(
+            super::list_subdirs_blocking(root, true, None).unwrap(),
+            vec!["hdir", "vdir"],
+        );
     }
 
     fn sorted(mut v: Vec<&str>) -> Vec<&str> {

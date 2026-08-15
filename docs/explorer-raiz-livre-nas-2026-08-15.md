@@ -90,6 +90,43 @@ mensagem no painel agora diz exatamente isso.
 Extra deste ciclo (pedido ao vivo): painel central (terminal/AI) agora espreme
 ate **160px** (era 25% ≈ 640px) — `App.tsx` id="workspace" minSize.
 
+## Correcao ao vivo (2026-08-15 01:46, feedback do Rodrigo durante a validacao)
+
+**Sintoma**: navegando na raiz do perfil, o explorer mostra "um monte de pasta"
+que da acesso negado ao clicar.
+
+**Achados (prova lida do ar)**:
+- O perfil tem 10 junctions de compatibilidade `Hidden+System+ReparsePoint`
+  (`My Documents`, `Application Data`, `Cookies`, `Local Settings`, `NetHood`,
+  `PrintHood`, `Recent`, `SendTo`, `Start Menu`, `Templates`) — enumeradas com
+  `Get-ChildItem -Force`.
+- Listar qualquer uma falha: `[System.IO.Directory]::GetFileSystemEntries('C:\Users\Zigfriad\My Documents')`
+  → "Access to the path ... is denied" (ACL de negacao por design do Windows;
+  o File Explorer as esconde pelo atributo Hidden).
+- Causa no codigo: `fs_read_dir_blocking`/`list_subdirs_blocking`
+  (src-tauri/src/modules/fs/tree.rs) so filtravam ponto-prefixo; o atributo
+  Hidden do Windows era ignorado, entao as junctions apareciam na arvore.
+- Descartado: Controlled Folder Access do Defender esta OFF
+  (EnableControlledFolderAccess=0) e nao ha redirecionamento OneDrive
+  (User Shell Folders apontam para C:\Users\Zigfriad\*). Desktop/Documents
+  reais continuam acessiveis e visiveis.
+
+**Correcao**: `os_hidden()` em tree.rs — no Windows, `FILE_ATTRIBUTE_HIDDEN`
+conta como oculto (paridade com o File Explorer), respeitando `show_hidden`
+nos dois comandos. Bonus: some tambem `$RECYCLE.BIN`/`System Volume
+Information` na raiz dos drives. Teste novo
+`windows_hidden_attribute_follows_show_hidden` trava a invariante.
+
+**Verificacao (2026-08-15 01:57)**: teste novo verde (9/9 no modulo tree);
+suite completa `cargo test --locked` 244 verdes + 1 falha ambiental conhecida
+(authorize_spawn_cwd_blocks_symlink_escape, symlink sem Developer Mode, ja
+registrada no criterio 7); `cargo clippy --all-targets --locked -D warnings`
+limpo; release `pnpm tauri build --no-bundle` OK, micah.exe novo de 01:57
+(9.6 MB). O exe em uso (PID 19340) foi renomeado para micah-running-old.exe
+para o link nao falhar; a instancia aberta ainda roda o codigo velho —
+**prova visual fica para o Rodrigo reabrir o Micah** (as junctions "My
+Documents"/"Application Data"/etc. devem sumir da arvore com hidden off).
+
 ## Rastro
 
 - WIP do Rodrigo (fs_list_drives, RootSwitcher do statusbar,
