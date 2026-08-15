@@ -25,6 +25,14 @@ projeto:
 #   - trocar uma peca da stack por outra "melhor"
 #   - reescrever um subsistema que ja funciona
 #
+# O que isso NAO proibe (esclarecido pelo Rodrigo, 2026-08-14): declarar como
+# dependencia DIRETA uma crate que ja esta compilada dentro do binario por
+# vir de dependencia existente. "Fazer funcionar o que tem dentro dele"
+# inclui o que ja esta dentro do binario: webview2-com e windows entram via
+# wry ha muito tempo — torna-las diretas nao adiciona um byte nem uma
+# tecnologia. Exemplo concreto: webview2-com liberado para o painel de
+# browser (GetFavicon nativo, listagem/remocao de extensoes, ClearBrowsingData).
+#
 # O que isso obriga:
 #   - resolver com o que ja esta declarado nas listas `stack` abaixo
 #   - se parecer que falta uma biblioteca, procurar de novo: quase sempre a
@@ -122,4 +130,34 @@ verificacao:
     vira um recorte do canto superior esquerdo e o clique erra o alvo, os dois
     reportando sucesso.
 
-rondas_pdi: []
+rondas_pdi:
+  - card: browser-pdi-2026-08-14
+    titulo: "PDI do Browser: largura + favoritos + sanduiche (COM liberado)"
+    data: 2026-08-14T23:50:00-03:00
+    resultado: "done — largura 560 estavel (3 causas-raiz), rail de favoritos com favicon COM, sanduiche com historico/extensoes/limpar dados; aprovado pelo Rodrigo em teste manual ao vivo"
+    prova:
+      artefato: "micah build 07c9464-dirty (base 07c9464 + mudancas do card, commitadas em seguida como o fechamento deste registro)"
+      verificado_em: "src-tauri/target/release/micah.exe em execucao no zig-laptop"
+      saida: "[2026-08-15][02:44:56][micah_lib][INFO] micah build 07c9464-dirty + CDP url=https://volur.com.br/lobo apos clique no favorito"
+    achados:
+      - categoria: "Estado e persistencia"
+        etapa: 1
+        evidencia: "telemetria plugin-log: target=1600 com storage limpo; resize contra grupo de 157px grava grow=206 — guarda GROUP_SANE_MIN_WIDTH=860 no enforce e no persist (useBrowserPanel.ts)"
+      - categoria: "Falha externa"
+        etapa: 1
+        evidencia: "resize() e malha aberta: um tiro aterrissava em 437/716/1313 (log); enforcement virou malha fechada age-confere-repete ate 8x"
+      - categoria: "Entrada vazia ou suja"
+        etapa: 1
+        evidencia: "onPointerDown do React no separador de 1px nunca dispara para clique 1-3px ao lado; hit-test proprio no window capture (borda direita do painel ±8px)"
+      - categoria: "Regressao"
+        etapa: 3
+        evidencia: "sanduiche abria ATRAS do webview: popper Radix dimensiona por mutacao de ATRIBUTO, observer childList nao ve (correcao 15 da auditoria, confirmada em producao pelo Rodrigo); fonte browser-menu por onOpenChange"
+      - categoria: "Concorrencia"
+        etapa: 2
+        evidencia: "browser_page_info le url+titulo+favicon numa viagem COM so (correcao 9); persist sincrono no pointerup ANTES de liberar o enforcement (o enforcement desfazia o arrasto do usuario, medido)"
+      - categoria: "Segredo em claro"
+        etapa: 3
+        evidencia: "redactUrl na query + userinfo, aplicada a historico, favoritos e URL_KEY do restore; 16 testes vitest (collections.test.ts)"
+      - categoria: "Rollback"
+        etapa: 2
+        evidencia: "todos os comandos novos em dupla panel.rs+stub.rs; cargo check --no-default-features exit 0; cada cast COM e if-let (runtime velho degrada, nunca derruba)"

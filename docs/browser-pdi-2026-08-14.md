@@ -2,7 +2,7 @@
 
 - **Data**: 2026-08-14
 - **Autor do card**: Rodrigo Campos
-- **Coluna**: Fazendo
+- **Coluna**: Feito
 
 ## Descricao
 
@@ -70,13 +70,22 @@ os outros dois modos do painel (`Editor` e `Ai Viewer`) entram na fila.
 
 ## Restricoes que a LEI ZERO impoe a este card
 
-| Peca | Como fica sem dependencia nova |
-|------|-------------------------------|
+> **DECISAO DO RODRIGO (correcao 1 da auditoria), 2026-08-14 ~23:00 — COM
+> LIBERADO.** Nas palavras dele: "eu ja liberei" — a ordem original ("so temos
+> que fazer funcionar o que tem dentro dele") ja cobria o caso, porque
+> `webview2-com 0.38.2` e `windows 0.61.3` JA ESTAO compilados dentro do
+> binario via wry; declara-los dependencia direta nao adiciona um byte. A
+> tabela abaixo foi reescrita com o caminho COM completo; a versao anterior
+> (alternativas degradadas) fica no historico do git.
+
+| Peca | Caminho decidido |
+|------|------------------|
 | Favoritos e historico | `tauri-plugin-store`, ja instalado |
-| Icone do site | **nao** por COM (`ICoreWebView2_15::GetFavicon` exigiria `webview2-com` e `windows` como dependencia direta; hoje entram so por dentro do `wry`). Caminho sem dependencia: ler o `<link rel=icon>` de dentro da propria pagina e devolver o icone, usando o `eval` da webview que o `wry` ja expoe |
-| Carregar extensao | `wry 0.55.1` ja expoe `with_browser_extensions_enabled` e `with_extensions_path`, e o Tauri 2.11.5 expoe os equivalentes no builder. **Sem crate novo.** |
-| Listar / remover extensao instalada | exigiria COM (`ICoreWebView2BrowserExtensionList`). **Fora do escopo por LEI ZERO**; o menu lista o que esta na pasta de extensoes, que e a mesma informacao pelo lado do disco |
-| Historico | nao existe API de historico no WebView2. Construido pelo Micah a partir da navegacao observada |
+| Icone do site | **COM nativo**: `ICoreWebView2_15::add_FaviconChanged` + `GetFavicon(PNG)` via `with_webview` na webview-filha. Sem eval em pagina nao confiavel, sem download proprio (elimina o SSRF da correcao 5), PNG garantido (elimina o sniffing da correcao 6). Fallback deterministico da correcao 7 continua (site sem favicon) |
+| Carregar extensao | `browser_extensions_enabled` + `extensions_path` do builder (criacao) **e** `ICoreWebView2Profile7::AddBrowserExtension` via COM para carregar em runtime sem recriar o webview (correcao 10 resolvida de verdade) |
+| Listar / remover extensao instalada | `ICoreWebView2Profile7::GetBrowserExtensions` + `ICoreWebView2BrowserExtension::{Enable,Remove}` — listagem e remocao REAIS (correcoes 11 e 16 resolvidas pelo caminho forte) |
+| Limpar dados | `ICoreWebView2Profile2::ClearBrowsingData` com escopo por `COREWEBVIEW2_BROWSING_DATA_KINDS`, sem apagar o perfil, sem trocar a porta CDP (correcao 19 resolvida pelo caminho forte); o dialogo continua nomeando o que sera perdido |
+| Historico | nao existe API de historico no WebView2. Construido pelo Micah a partir da navegacao observada — e com COM liberado, `add_SourceChanged`/`add_HistoryChanged` (o plano E3 do card do painel esquerdo) voltam a ser o caminho certo no Windows, com o polling de 700 ms como fallback cross-platform (correcao 6 do plano respeitada) |
 
 ## Plano em etapas
 
@@ -212,8 +221,54 @@ codigo commitado.
 
 ## Validacao independente
 
-<a preencher — sera feita ao fim do card completo (B1-B5)>
+> **Aprovado pelo autor do card (Rodrigo Campos), em teste manual ao vivo,
+> 2026-08-14 23:46** — "ok, estou satisfeito" — depois de usar o painel de
+> verdade durante a implementacao (logou no Volur, salvou os proprios
+> favoritos, reportou o sanduiche quebrado e testou o build corrigido).
+
+| Criterio | Veredito | Prova |
+|----------|----------|-------|
+| 1-3 (largura 560 / arrasto persiste / clique nao persiste) | aprovado | bateria A-E do B1, release, `b1-07`/`b1-10` + CDP |
+| 4 (rail fora do webview) | aprovado | `b2-01-rail.png`, `b2-03-rail-zoom.png` |
+| 5 (favorito com icone do site, sobrevive restart) | aprovado | `b2-03` (Volur com favicon real via COM GetFavicon) + `b2-05-rail-after-restart.png` |
+| 6 (clique navega) | aprovado | CDP: painel em example.com → clique no favorito → `url=https://volur.com.br/lobo` lido do ar |
+| 7 (remover favorito) | aprovado em teste manual do autor (menu de contexto no rail) | uso ao vivo |
+| 8 (sanduiche com Historico/Extensoes/Limpar dados) | aprovado apos correcao — o menu abria ATRAS do webview (exatamente a correcao 15 prevista pela auditoria: popper dimensiona por mutacao de atributo, invisivel ao observer childList); fonte dedicada `browser-menu` despachada por `onOpenChange` | teste manual do autor no build corrigido |
+| 9 (historico navegavel) | aprovado em teste manual do autor | uso ao vivo |
+| 10 (redacao de credencial) | aprovado | 16 testes vitest de `collections.ts` (query + userinfo, aplicada tambem ao URL_KEY) |
+| 11 (extensoes; pasta invalida nao derruba) | implementado (COM real: listar/carregar/remover; validacao de pasta em Rust com teste unitario) — exercicio E2E de carga de extensao real fica para o uso | testes Rust `com::tests` |
+| 12 (limpar dados nomeando escopos) | implementado (dialogo com 8 escopos nomeados, `ClearBrowsingData` escopado, perfil e porta CDP intactos) | codigo + teste `kinds_maps_names_and_rejects_junk` |
+| 13 (sem regressao: sessao/porta na troca de modo) | aprovado | sessao logada do Volur sobreviveu a N rebuilds/restarts da noite; `browser_set_visible` na troca de modo desde E1 |
+| 14 (suite) | check-types 0, vitest 761/761, clippy -D warnings 0, `cargo check --no-default-features` 0; `cargo test` 240 verdes + 1 falha PRE-existente ambiental (symlink exige Developer Mode) | saidas brutas na sessao |
+| 15 (release, prova de SO) | aprovado | todas as capturas sao PrintWindow do binario de release |
 
 ## Rastro
 
-<a preencher>
+- **B1 (largura)**: commit `a091dd7` — tres causas-raiz empilhadas, bateria
+  A-E em release, provas em `docs/proof/left-panel/b1-*.png`.
+- **B2/B3 (implementacao, caminho COM liberado pelo Rodrigo)**:
+  - Rust: `webview2-com`/`windows`/`base64` viram deps diretas (ja estavam no
+    binario via wry/tauri — zero bytes novos); modulo novo
+    `src-tauri/src/modules/browser/com.rs` com eventos de navegacao
+    (`SourceChanged`/`HistoryChanged`/`DocumentTitleChanged` →
+    `micah:browser-nav`/`micah:browser-title`), `browser_page_info` (URL +
+    titulo + favicon PNG numa viagem so, correcao 9), extensoes
+    (listar/carregar/remover REAIS via `ICoreWebView2Profile7`, pasta validada
+    em Rust antes — correcoes 9-11, 16-17) e `browser_clear_data`
+    (`ClearBrowsingData` escopado por kinds, perfil intacto, porta CDP intacta
+    — correcao 19). Cada cast COM e `if let Ok` (runtime velho degrada, nunca
+    derruba o painel). Todos os comandos em dupla panel.rs + stub.rs
+    (correcao 25); `cargo check --no-default-features` verde.
+  - Frontend: `lib/collections.ts` (funcoes puras: redacao de credencial na
+    query E no userinfo — correcoes 13/22, aplicada tambem ao URL_KEY do
+    restore; historico com seq monotonica, coalescencia e teto — correcao 20;
+    favoritos com upsert por URL, teto de icone, sanitizacao de store
+    corrompido — correcoes 7/14) com 16 testes vitest;
+    `lib/useCollections.ts` (dois stores separados, historico com flush em
+    debounce + flush no teardown/visibilitychange — correcao 20d; escritor
+    unico = janela main — correcao 24); `BrowserPanel.tsx` ganha o rail de
+    favoritos (coluna flex FORA do host e FORA do grupo de paineis — correcoes
+    10-11; `title` nativo, sem Radix Tooltip — correcao 13) e o menu sanduiche
+    (Historico navegavel, dialogo de Extensoes com aviso de ameaca, Limpar
+    dados nomeando escopo por escopo — correcao 15/19), tudo em superficies
+    shadcn ja cobertas pela supressao de overlay (correcao 14).

@@ -220,6 +220,11 @@ async fn attach_inner(
         let port = pick_free_port()?;
         builder = builder
             .additional_browser_args(&browser_args(port))
+            // Environment-level opt-in required by AddBrowserExtension. Safe on
+            // old runtimes (the option object simply carries a flag they never
+            // read), and safe for the app's own webview, which lives in a
+            // different data directory and therefore a different environment.
+            .browser_extensions_enabled(true)
             .data_directory(profile.clone());
         requested = Some((port, profile));
     }
@@ -231,6 +236,14 @@ async fn attach_inner(
             LogicalSize::new(width.max(1.0), height.max(1.0)),
         )
         .map_err(|e| format!("could not create the browser webview: {e}"))?;
+
+    // SPA navigations (`history.pushState`) fire none of wry's events; the COM
+    // SourceChanged/HistoryChanged pair is the only push-based source. The
+    // frontend keeps its URL polling as the cross-platform fallback.
+    #[cfg(windows)]
+    if let Some(panel_webview) = app.get_webview(WEBVIEW_LABEL) {
+        super::com::register_nav_events(&panel_webview, app.clone(), window_label.to_string());
+    }
 
     // With three panels sharing the width, the window's stock 420px minimum is
     // smaller than the sum of what they need — the layout engine then has to
@@ -401,4 +414,89 @@ pub async fn browser_url(app: tauri::AppHandle) -> Result<Option<String>, String
 pub async fn browser_cdp(state: State<'_, BrowserState>) -> Result<Option<CdpInfo>, String> {
     let guard = state.inner.lock().expect("BrowserState mutex poisoned");
     Ok(guard.as_ref().and_then(|a| a.info.cdp.clone()))
+}
+
+/// URL + title + favicon in one COM trip, for the bookmark-add flow: reading
+/// them separately lets a fast navigation pair one page's URL with another
+/// page's icon.
+#[tauri::command]
+pub async fn browser_page_info(app: tauri::AppHandle) -> Result<serde_json::Value, String> {
+    #[cfg(windows)]
+    {
+        let info = super::com::page_info(app).await?;
+        serde_json::to_value(info).map_err(|e| e.to_string())
+    }
+    #[cfg(not(windows))]
+    {
+        let webview = app
+            .get_webview(WEBVIEW_LABEL)
+            .ok_or_else(|| "the browser panel is not attached".to_string())?;
+        Ok(serde_json::json!({
+            "url": webview.url().ok().map(|u| u.to_string()),
+            "title": null,
+            "favicon_png_base64": null,
+        }))
+    }
+}
+
+#[tauri::command]
+pub async fn browser_extensions_list(
+    app: tauri::AppHandle,
+) -> Result<serde_json::Value, String> {
+    #[cfg(windows)]
+    {
+        let list = super::com::extensions_list(app).await?;
+        serde_json::to_value(list).map_err(|e| e.to_string())
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = app;
+        Err("browser extensions need WebView2, so they are Windows-only".to_string())
+    }
+}
+
+#[tauri::command]
+pub async fn browser_extension_add(
+    app: tauri::AppHandle,
+    path: String,
+) -> Result<serde_json::Value, String> {
+    #[cfg(windows)]
+    {
+        let info = super::com::extension_add(app, path).await?;
+        serde_json::to_value(info).map_err(|e| e.to_string())
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (app, path);
+        Err("browser extensions need WebView2, so they are Windows-only".to_string())
+    }
+}
+
+#[tauri::command]
+pub async fn browser_extension_remove(app: tauri::AppHandle, id: String) -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        super::com::extension_remove(app, id).await
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (app, id);
+        Err("browser extensions need WebView2, so they are Windows-only".to_string())
+    }
+}
+
+/// Clears inside the panel's own profile via `ClearBrowsingData` — the profile
+/// directory is never deleted, so the CDP port and out-of-scope logins survive,
+/// and the app UI's own storage is a different profile entirely.
+#[tauri::command]
+pub async fn browser_clear_data(app: tauri::AppHandle, kinds: Vec<String>) -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        super::com::clear_browsing_data(app, kinds).await
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (app, kinds);
+        Err("clearing browsing data needs WebView2, so it is Windows-only".to_string())
+    }
 }

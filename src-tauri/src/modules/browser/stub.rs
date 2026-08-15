@@ -81,3 +81,36 @@ pub async fn browser_url(_app: tauri::AppHandle) -> Result<Option<String>, Strin
 pub async fn browser_cdp(_state: State<'_, BrowserState>) -> Result<Option<CdpInfo>, String> {
     Ok(None)
 }
+
+#[tauri::command]
+pub async fn browser_page_info(_app: tauri::AppHandle) -> Result<serde_json::Value, String> {
+    Err(DISABLED.to_string())
+}
+
+#[tauri::command]
+pub async fn browser_extensions_list(
+    _app: tauri::AppHandle,
+) -> Result<serde_json::Value, String> {
+    Err(DISABLED.to_string())
+}
+
+#[tauri::command]
+pub async fn browser_extension_add(
+    _app: tauri::AppHandle,
+    _path: String,
+) -> Result<serde_json::Value, String> {
+    Err(DISABLED.to_string())
+}
+
+#[tauri::command]
+pub async fn browser_extension_remove(_app: tauri::AppHandle, _id: String) -> Result<(), String> {
+    Err(DISABLED.to_string())
+}
+
+#[tauri::command]
+pub async fn browser_clear_data(
+    _app: tauri::AppHandle,
+    _kinds: Vec<String>,
+) -> Result<(), String> {
+    Err(DISABLED.to_string())
+}

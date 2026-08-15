@@ -99,6 +99,7 @@ import {
   disposeSession,
   findLeafCwd,
   hasLeaf,
+  leafHasForegroundProcess,
   leafIds,
   navigateFocusedBlocks,
   ptyIdForLeaf,
@@ -368,11 +369,8 @@ export default function App() {
   useEditorFileSync({ tabs, tabsRef, editorRefs });
   useThemeFileEditing({ tabsRef, openFileTab });
 
-  const { explorerRoot, inheritedCwdForNewTab } = useWorkspaceCwd(
-    activeTab,
-    tabs,
-    launchCwd ?? home,
-  );
+  const { explorerRoot, inheritedCwdForNewTab, setExplorerRootOverride } =
+    useWorkspaceCwd(activeTab, tabs, launchCwd ?? home);
 
   useWindowTitle(activeTab, explorerRoot);
 
@@ -617,10 +615,19 @@ export default function App() {
       if (activeLeafId === null) return;
       const term = terminalRefs.current.get(activeLeafId);
       if (!term) return;
-      term.write(`cd ${quoteShellArg(path)}\r`);
-      term.focus();
+      void (async () => {
+        // A busy shell (running command, agent) can't take a cd — injecting
+        // one would feed the text to the foreground process. Point the
+        // explorer there instead; the next real cwd change supersedes it.
+        if (await leafHasForegroundProcess(activeLeafId)) {
+          setExplorerRootOverride(path);
+          return;
+        }
+        term.write(`cd ${quoteShellArg(path)}\r`);
+        term.focus();
+      })();
     },
-    [activeLeafId],
+    [activeLeafId, setExplorerRootOverride],
   );
 
   const cdInNewTab = useCallback(
@@ -1443,6 +1450,8 @@ export default function App() {
                       onGo={browser.go}
                       onReload={browser.reload}
                       onRetry={browser.retry}
+                      onSuppress={browser.suppress}
+                      onRelease={browser.release}
                     />
                   </div>
                   {leftPanel.mode === "browser" && !browser.enabled ? (

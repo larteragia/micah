@@ -43,6 +43,14 @@ export const OVERLAY_SOURCES = [
    * lose the page's session on every click of the mode switcher.
    */
   "mode",
+  /**
+   * The panel's own menus (hamburger dropdown, bookmark context menu). These
+   * cannot rely on the selector scan: Radix mounts popper content at zero size
+   * and then sizes it through ATTRIBUTE mutations, which the childList-only
+   * MutationObserver never sees — the menu would open behind the webview.
+   * Dispatched from onOpenChange instead, which is exact and race-free.
+   */
+  "browser-menu",
 ] as const;
 
 export type OverlaySource = (typeof OVERLAY_SOURCES)[number];
@@ -127,6 +135,7 @@ export const CODE_DRIVEN_SOURCES: readonly OverlaySource[] = [
   "layout",
   "disabled",
   "mode",
+  "browser-menu",
 ];
 
 export type OverlayRect = {

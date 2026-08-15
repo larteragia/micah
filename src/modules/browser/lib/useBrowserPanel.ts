@@ -10,6 +10,7 @@ import {
   sameBounds,
   zoomScaleFor,
 } from "./bounds";
+import { redactUrl } from "./collections";
 import {
   EMPTY_SUPPRESSION,
   isSuppressed,
@@ -547,7 +548,10 @@ export function useBrowserPanel({
         if (!alive || !current || current === lastUrlRef.current) return;
         lastUrlRef.current = current;
         setUrl(current);
-        writeStored(URL_KEY, current);
+        // Redacted on the way to disk: the restore key can otherwise hold an
+        // OAuth callback with a live code in the query. The page itself keeps
+        // the real URL; only what survives the session is stripped.
+        writeStored(URL_KEY, redactUrl(current));
       } catch {
         // panel not attached yet
       }
@@ -568,7 +572,7 @@ export function useBrowserPanel({
       if (!resolved) return; // empty input is a no-op, not a failure
       lastUrlRef.current = resolved;
       setUrl(resolved);
-      writeStored(URL_KEY, resolved);
+      writeStored(URL_KEY, redactUrl(resolved));
       setError(null);
     } catch (e) {
       setError(String(e));

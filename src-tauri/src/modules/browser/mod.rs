@@ -34,6 +34,11 @@ pub mod panel;
 #[cfg(not(feature = "browser-panel"))]
 pub mod stub;
 
+// Raw WebView2 COM (favicon, nav events, extensions, clear data). Windows-only
+// by nature; the panel commands degrade gracefully elsewhere.
+#[cfg(all(windows, feature = "browser-panel"))]
+pub mod com;
+
 /// The active implementation. `generate_handler!` resolves the macros each
 /// `#[tauri::command]` generates alongside the function, so the call sites name
 /// this alias rather than the feature-specific module.

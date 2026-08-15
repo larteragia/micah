@@ -2583,6 +2583,7 @@ dependencies = [
 name = "micah"
 version = "0.8.6"
 dependencies = [
+ "base64 0.22.1",
  "bytes",
  "dirs 6.0.0",
  "futures-util",
@@ -2620,7 +2621,9 @@ dependencies = [
  "tauri-plugin-window-state",
  "tempfile",
  "tokio",
+ "webview2-com",
  "which",
+ "windows",
  "windows-sys 0.61.2",
 ]
 

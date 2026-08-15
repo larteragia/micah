@@ -143,15 +143,15 @@ async fn open_settings_window(app: tauri::AppHandle, tab: Option<String>) -> Res
         if let (Ok(main_pos), Ok(main_size), Ok(settings_size)) = (
             main.outer_position(),
             main.outer_size(),
-            window.outer_size(),
+            _window.outer_size(),
         ) {
             let x = main_pos.x
                 + ((main_size.width as i32).saturating_sub(settings_size.width as i32)) / 2;
             let y = main_pos.y
                 + ((main_size.height as i32).saturating_sub(settings_size.height as i32)) / 2;
-            let _ = window.set_position(PhysicalPosition::new(x, y));
+            let _ = _window.set_position(PhysicalPosition::new(x, y));
         } else {
-            let _ = window.center();
+            let _ = _window.center();
         }
     }
 
@@ -317,6 +317,7 @@ pub fn run() {
             pty::pty_list_shells,
             fs::tree::list_subdirs,
             fs::tree::fs_read_dir,
+            fs::tree::fs_list_drives,
             fs::file::fs_read_file,
             fs::file::fs_write_file,
             fs::file::fs_stat,
@@ -399,6 +400,11 @@ pub fn run() {
             browser::commands::browser_reload,
             browser::commands::browser_url,
             browser::commands::browser_cdp,
+            browser::commands::browser_page_info,
+            browser::commands::browser_extensions_list,
+            browser::commands::browser_extension_add,
+            browser::commands::browser_extension_remove,
+            browser::commands::browser_clear_data,
             browser::browser_build_id,
         ])
         .build(tauri::generate_context!())

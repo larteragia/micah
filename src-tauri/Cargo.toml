@@ -70,6 +70,9 @@ tokio = { version = "1", default-features = false, features = ["rt"] }
 tempfile = "3"
 notify = "8.2.0"
 which = "8.0.4"
+# Already in the dependency tree (tauri/wry); direct so the browser panel can
+# encode favicon bytes for the frontend. Adds nothing to the binary.
+base64 = "0.22"
 
 [dev-dependencies]
 proptest = "1"
@@ -102,6 +105,12 @@ windows-sys = { version = "0.61", features = [
 	"Win32_System_Threading",
 	"Win32_System_Diagnostics_ToolHelp",
 ] }
+# Both already compiled into the binary through wry. Direct so the browser
+# panel can reach the WebView2 interfaces wry does not surface (favicon,
+# navigation events, extensions, ClearBrowsingData) — decision recorded in
+# docs/browser-pdi-2026-08-14.md, "COM LIBERADO".
+webview2-com = "0.38"
+windows = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Com"] }
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-autostart = "2"
