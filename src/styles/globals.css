@@ -196,19 +196,11 @@ html[data-chrome="borderless"] #settings-root {
  * xterm.js overrides — kept outside @layer so they win against the addon's
  * own stylesheet (which is not in any layer and would otherwise override).
  *
- * Newer xterm renders scrollbars as real <div class="scrollbar vertical|horizontal">
- * children rather than relying on native overflow scrollbars. Both code paths exist
- * across versions, so we hide both.
+ * xterm 6 renders its scrollbar as real <div class="scrollbar"> children
+ * (VS Code scrollable element): those stay VISIBLE so long scrollback can be
+ * grabbed with the mouse, themed via scrollbarSlider* in terminalTheme.ts.
+ * Only the native viewport scrollbar is hidden, or both would show.
  */
-.xterm .scrollbar,
-.xterm .scrollbar.vertical,
-.xterm .scrollbar.horizontal {
-  display: none !important;
-  visibility: hidden !important;
-  width: 0 !important;
-  height: 0 !important;
-  pointer-events: none !important;
-}
 .xterm .xterm-viewport,
 .xterm-viewport {
   scrollbar-width: none !important;
