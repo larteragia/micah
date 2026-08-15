@@ -44,8 +44,7 @@ const PRUNE_DIRS: &[&str] = &[
     "__pycache__",
 ];
 
-#[tauri::command]
-pub fn fs_search(
+pub fn fs_search_blocking(
     root: String,
     query: String,
     limit: Option<usize>,
@@ -153,8 +152,7 @@ pub struct ListFilesResult {
     pub truncated: bool,
 }
 
-#[tauri::command]
-pub fn fs_list_files(
+pub fn fs_list_files_blocking(
     root: String,
     limit: Option<usize>,
     max_depth: Option<usize>,
@@ -247,6 +245,41 @@ fn display_path(
         }
     }
     to_canon(path)
+}
+
+// Thin async fronts. The walks are pure blocking IO, and on a network root
+// (the NAS over SMB) a single search can take minutes — run inline on the
+// main thread (what a non-async command does) it freezes the whole window.
+// `spawn_blocking` is the house pattern (wsl_list_distros, git, pty).
+
+#[tauri::command]
+pub async fn fs_search(
+    root: String,
+    query: String,
+    limit: Option<usize>,
+    workspace: Option<WorkspaceEnv>,
+    show_hidden: Option<bool>,
+) -> Result<SearchResult, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        fs_search_blocking(root, query, limit, workspace, show_hidden)
+    })
+    .await
+    .map_err(|e| format!("search task: {e}"))?
+}
+
+#[tauri::command]
+pub async fn fs_list_files(
+    root: String,
+    limit: Option<usize>,
+    max_depth: Option<usize>,
+    workspace: Option<WorkspaceEnv>,
+    show_hidden: Option<bool>,
+) -> Result<ListFilesResult, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        fs_list_files_blocking(root, limit, max_depth, workspace, show_hidden)
+    })
+    .await
+    .map_err(|e| format!("list task: {e}"))?
 }
 
 #[cfg(test)]

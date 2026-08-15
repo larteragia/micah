@@ -121,6 +121,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { SearchAddon } from "@xterm/addon-search";
+import { toast } from "sonner";
 import {
   useCallback,
   useEffect,
@@ -608,6 +609,37 @@ export default function App() {
       }
     },
     [inheritedCwdForNewTab, newAgentGroupTab],
+  );
+
+  /**
+   * Re-root the explorer at an arbitrary path — another folder, another
+   * drive, the NAS. Authorization comes first: every fs command the tree and
+   * the search run is gated by the workspace registry, and a root picked by
+   * hand was never authorized by a terminal cwd. The canonical form the
+   * registry answers with is what the tree gets, so separators and casing
+   * cannot make the same folder look like two.
+   */
+  const navigateExplorerRoot = useCallback(
+    (path: string) => {
+      void (async () => {
+        try {
+          // Authorize by whatever the registry canonicalizes to, but keep the
+          // PICKED spelling as the root. The canonical form of a mapped drive
+          // is the UNC path (Z:/ becomes //host/share), which would rename the
+          // header, break "up one level" at the share root, and make the same
+          // folder exist under two spellings when the terminal cwd (Z:/...)
+          // takes over again. The registry canonicalizes on both sides of
+          // every check, so the two spellings authorize the same.
+          await native.workspaceAuthorize(path);
+          setExplorerRootOverride(path.replace(/\\/g, "/"));
+        } catch (e) {
+          toast.error(`Nao deu para abrir ${path}`, {
+            description: String(e),
+          });
+        }
+      })();
+    },
+    [setExplorerRootOverride],
   );
 
   const sendCd = useCallback(
@@ -1499,7 +1531,11 @@ export default function App() {
                   to 100 and the remainder lands on the first panel that will
                   take it, which is the left one. A group also needs at least one
                   panel left on `preserve-relative-size`, and this is it. */}
-              <ResizablePanel id="workspace" minSize="25%">
+              {/* 160px, not a percentage: Rodrigo wants the middle column
+                  (terminal / talking to the AI) squeezable when the browser or
+                  the editor is the star of the moment. Still the group's one
+                  elastic panel (no defaultSize). */}
+              <ResizablePanel id="workspace" minSize="160px">
                 <div className="flex h-full min-h-0 flex-col">
                   <div className="relative min-h-0 flex-1">
                     <WorkspaceSurface
@@ -1564,6 +1600,8 @@ export default function App() {
                       <FileExplorer
                         ref={explorerRef}
                         rootPath={explorerRoot}
+                        home={home}
+                        onNavigateRoot={navigateExplorerRoot}
                         gitStatus={
                           explorerGitDecorations ? sourceControl.status : null
                         }

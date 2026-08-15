@@ -13,11 +13,13 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { IS_WINDOWS } from "@/lib/platform";
 import { usePreferencesStore } from "@/modules/settings/preferences";
 import { currentWorkspaceEnv } from "@/modules/workspace";
 import {
   ArrowDown01Icon,
   Folder01Icon,
+  HardDriveIcon,
   Home03Icon,
   MoreHorizontalIcon,
 } from "@hugeicons/core-free-icons";
@@ -55,6 +57,7 @@ export function CwdBreadcrumb({ cwd, filePath, home, onCd }: Props) {
     return (
       <Breadcrumb>
         <BreadcrumbList className="gap-1 text-xs sm:gap-1.5">
+          <RootSwitcher home={home} onCd={onCd} />
           {first ? (
             <BreadcrumbSegment
               label={first.label}
@@ -97,6 +100,7 @@ export function CwdBreadcrumb({ cwd, filePath, home, onCd }: Props) {
   return (
     <Breadcrumb>
       <BreadcrumbList className="gap-1 text-xs sm:gap-1.5">
+        <RootSwitcher home={home} onCd={onCd} />
         {firstParent ? (
           <BreadcrumbSegment
             label={firstParent.label}
@@ -125,6 +129,85 @@ export function CwdBreadcrumb({ cwd, filePath, home, onCd }: Props) {
         </BreadcrumbItem>
       </BreadcrumbList>
     </Breadcrumb>
+  );
+}
+
+// Windows-only jump list for filesystem roots (Home + mounted drive letters,
+// mapped network drives included). Unix has one root, and inside WSL the
+// Windows drive letters are not cd-able, so the switcher stays hidden there.
+function RootSwitcher({
+  home,
+  onCd,
+}: {
+  home: string | null;
+  onCd: (p: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [drives, setDrives] = useState<string[] | null>(null);
+
+  useEffect(() => {
+    if (!open || drives !== null) return;
+    invoke<string[]>("fs_list_drives")
+      .then(setDrives)
+      .catch(() => setDrives([]));
+  }, [open, drives]);
+
+  if (!IS_WINDOWS || currentWorkspaceEnv().kind !== "local") return null;
+
+  return (
+    <>
+      <BreadcrumbItem>
+        <DropdownMenu open={open} onOpenChange={setOpen}>
+          <DropdownMenuTrigger asChild>
+            <button
+              type="button"
+              title="Go to drive"
+              className="flex cursor-pointer items-center gap-0.5 rounded-sm px-1 py-0.5 text-muted-foreground hover:bg-accent hover:text-foreground"
+            >
+              <HugeiconsIcon
+                icon={HardDriveIcon}
+                className="size-3"
+                strokeWidth={1.75}
+              />
+              <HugeiconsIcon
+                icon={ArrowDown01Icon}
+                className="size-3 opacity-70"
+                strokeWidth={2}
+              />
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start" className="max-h-72 overflow-y-auto">
+            {home ? (
+              <DropdownMenuItem onSelect={() => onCd(home)}>
+                <HugeiconsIcon
+                  icon={Home03Icon}
+                  className="size-3.5 text-muted-foreground"
+                  strokeWidth={1.75}
+                />
+                Home
+              </DropdownMenuItem>
+            ) : null}
+            {drives === null ? (
+              <div className="px-2 py-1.5 text-xs text-muted-foreground">
+                Loading…
+              </div>
+            ) : (
+              drives.map((d) => (
+                <DropdownMenuItem key={d} onSelect={() => onCd(d)}>
+                  <HugeiconsIcon
+                    icon={HardDriveIcon}
+                    className="size-3.5 text-muted-foreground"
+                    strokeWidth={1.75}
+                  />
+                  {d.replace(/\/$/, "")}
+                </DropdownMenuItem>
+              ))
+            )}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </BreadcrumbItem>
+      <BreadcrumbSeparator className="[&>svg]:size-3" />
+    </>
   );
 }
 

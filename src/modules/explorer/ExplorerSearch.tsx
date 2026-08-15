@@ -331,9 +331,11 @@ export const ExplorerSearch = forwardRef<ExplorerSearchHandle, Props>(function E
                 );
               })
             )}
-            {truncated && results.length > 0 ? (
+            {truncated ? (
               <div className="px-3 py-1.5 text-[10px] text-muted-foreground">
-                Showing partial results — refine your query.
+                {results.length > 0
+                  ? "Showing partial results — the scan stopped at its entry budget; refine your query or search from a deeper folder."
+                  : "The scan stopped at its entry budget before finishing — no match is NOT proof of absence on a root this big. Search from a deeper folder."}
               </div>
             ) : null}
           </div>

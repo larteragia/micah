@@ -19,10 +19,12 @@ const HARD_MAX_RESULTS: usize = 2000;
 /// Supersession counter for interactive content search. Each new interactive
 /// query bumps the generation; in-flight walks observe the change and quit,
 /// so fast typing stops superseded searches server-side instead of letting
-/// them run to completion.
+/// them run to completion. `Arc` so the counter can ride into the blocking
+/// pool with the walk — with the commands async, walks genuinely overlap and
+/// the cancellation finally has something to cancel.
 #[derive(Default)]
 pub struct ContentSearchState {
-    generation: AtomicU64,
+    generation: std::sync::Arc<AtomicU64>,
 }
 
 #[derive(Serialize)]
@@ -169,8 +171,7 @@ fn search_tree(
     }
 }
 
-#[tauri::command]
-pub fn fs_grep(
+pub fn fs_grep_blocking(
     pattern: String,
     root: String,
     glob: Option<Vec<String>>,
@@ -211,19 +212,14 @@ pub fn fs_grep(
 
 /// Interactive content search for the command palette. Treats the query as a
 /// literal (smart-case), and self-cancels when a newer query arrives.
-#[tauri::command]
-pub fn fs_grep_interactive(
-    state: tauri::State<'_, ContentSearchState>,
+fn fs_grep_interactive_blocking(
+    generation: std::sync::Arc<AtomicU64>,
+    my_gen: u64,
     pattern: String,
     root: String,
     max_results: Option<usize>,
     workspace: Option<WorkspaceEnv>,
 ) -> Result<GrepResponse, String> {
-    if pattern.trim().is_empty() {
-        return Err("empty pattern".into());
-    }
-    let my_gen = state.generation.fetch_add(1, Ordering::SeqCst) + 1;
-
     let workspace = WorkspaceEnv::from_option(workspace);
     let root_path = resolve_path(&root, &workspace);
     if !root_path.is_dir() {
@@ -239,7 +235,7 @@ pub fn fs_grep_interactive(
         .build(&escape_literal(&pattern))
         .map_err(|e| format!("bad pattern: {e}"))?;
 
-    let cancel = || state.generation.load(Ordering::SeqCst) != my_gen;
+    let cancel = || generation.load(Ordering::SeqCst) != my_gen;
     Ok(search_tree(
         &root_path,
         &root,
@@ -263,8 +259,7 @@ pub struct GlobResponse {
     pub truncated: bool,
 }
 
-#[tauri::command]
-pub fn fs_glob(
+pub fn fs_glob_blocking(
     pattern: String,
     root: String,
     max_results: Option<usize>,
@@ -341,6 +336,63 @@ fn display_path(
         }
     }
     to_canon(path)
+}
+
+// Thin async fronts: the walks are blocking IO and, on a network root, slow —
+// inline on the main thread (a non-async command) they freeze the window, and
+// the interactive search's generation-cancel is inert because serialized
+// walks can never overlap. See search.rs for the same note.
+
+#[tauri::command]
+pub async fn fs_grep(
+    pattern: String,
+    root: String,
+    glob: Option<Vec<String>>,
+    case_insensitive: Option<bool>,
+    max_results: Option<usize>,
+    workspace: Option<WorkspaceEnv>,
+) -> Result<GrepResponse, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        fs_grep_blocking(pattern, root, glob, case_insensitive, max_results, workspace)
+    })
+    .await
+    .map_err(|e| format!("grep task: {e}"))?
+}
+
+#[tauri::command]
+pub async fn fs_grep_interactive(
+    state: tauri::State<'_, ContentSearchState>,
+    pattern: String,
+    root: String,
+    max_results: Option<usize>,
+    workspace: Option<WorkspaceEnv>,
+) -> Result<GrepResponse, String> {
+    if pattern.trim().is_empty() {
+        return Err("empty pattern".into());
+    }
+    // Bump BEFORE spawning, on the shared counter, so the walk already in the
+    // pool sees the new generation and quits.
+    let generation = state.generation.clone();
+    let my_gen = generation.fetch_add(1, Ordering::SeqCst) + 1;
+    tauri::async_runtime::spawn_blocking(move || {
+        fs_grep_interactive_blocking(generation, my_gen, pattern, root, max_results, workspace)
+    })
+    .await
+    .map_err(|e| format!("grep task: {e}"))?
+}
+
+#[tauri::command]
+pub async fn fs_glob(
+    pattern: String,
+    root: String,
+    max_results: Option<usize>,
+    workspace: Option<WorkspaceEnv>,
+) -> Result<GlobResponse, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        fs_glob_blocking(pattern, root, max_results, workspace)
+    })
+    .await
+    .map_err(|e| format!("glob task: {e}"))?
 }
 
 #[cfg(test)]

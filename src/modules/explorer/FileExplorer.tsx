@@ -7,13 +7,25 @@ import {
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
 import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
+  ArrowDown01Icon,
+  ArrowUp01Icon,
   FileAddIcon,
   Folder01Icon,
   FolderAddIcon,
+  HardDriveIcon,
+  Home03Icon,
   Refresh01Icon,
   Search01Icon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
+import { invoke } from "@tauri-apps/api/core";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   forwardRef,
@@ -54,6 +66,14 @@ export type FileExplorerHandle = {
 
 type Props = {
   rootPath: string | null;
+  /** The user's home, for the root navigator's Home entry. */
+  home?: string | null;
+  /**
+   * Re-root the explorer at an arbitrary path (parent dir, another drive, the
+   * NAS). The handler is expected to authorize the path in the workspace
+   * registry before the tree tries to read it.
+   */
+  onNavigateRoot?: (path: string) => void;
   activeFilePath?: string | null;
   onOpenFile: (path: string, pin?: boolean) => void;
   onPathRenamed?: (from: string, to: string) => void;
@@ -188,6 +208,8 @@ export const FileExplorer = memo(
   forwardRef<FileExplorerHandle, Props>(function FileExplorer(
     {
       rootPath,
+      home,
+      onNavigateRoot,
       activeFilePath,
       onOpenFile,
       onPathRenamed,
@@ -499,19 +521,27 @@ export const FileExplorer = memo(
         onKeyDown={handleKeyDown}
       >
         <div className="flex h-8 shrink-0 items-center gap-1 border-b border-border/60 px-2">
-          <span
-            className="flex flex-1 items-center truncate text-xs font-medium text-foreground/80"
-            title={rootPath}
-          >
-            <img
-              src={folderIconUrl(basename(rootPath), false)}
-              alt=""
-              height={15}
-              width={15}
-              className="mx-1.5"
+          {onNavigateRoot ? (
+            <RootNavigator
+              rootPath={rootPath}
+              home={home ?? null}
+              onNavigateRoot={onNavigateRoot}
             />
-            {basename(rootPath)}
-          </span>
+          ) : (
+            <span
+              className="flex flex-1 items-center truncate text-xs font-medium text-foreground/80"
+              title={rootPath}
+            >
+              <img
+                src={folderIconUrl(basename(rootPath), false)}
+                alt=""
+                height={15}
+                width={15}
+                className="mx-1.5"
+              />
+              {basename(rootPath)}
+            </span>
+          )}
 
           <Button
             variant="ghost"
@@ -857,3 +887,99 @@ export const FileExplorer = memo(
     );
   }),
 );
+
+/**
+ * The root label as a navigator: up one level, Home, and the mounted drives
+ * (mapped network drives — the NAS — included). This is what frees the
+ * explorer from the terminal's cwd: the search and the tree both follow
+ * whatever root is picked here.
+ */
+function RootNavigator({
+  rootPath,
+  home,
+  onNavigateRoot,
+}: {
+  rootPath: string;
+  home: string | null;
+  onNavigateRoot: (path: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [drives, setDrives] = useState<string[] | null>(null);
+
+  // Fetched on open, once: probing A:..Z: costs real IO on network drives and
+  // the list only changes when something is mounted.
+  useEffect(() => {
+    if (!open || drives !== null) return;
+    invoke<string[]>("fs_list_drives")
+      .then(setDrives)
+      .catch(() => setDrives([]));
+  }, [open, drives]);
+
+  // "C:/Users/Zigfriad" -> "C:/Users" -> "C:/"; a drive root has no parent.
+  const parent = (() => {
+    const trimmed = rootPath.replace(/\/+$/, "");
+    const i = trimmed.lastIndexOf("/");
+    if (i < 0) return null;
+    const up = trimmed.slice(0, i);
+    if (!up) return null;
+    return /^[A-Za-z]:$/.test(up) ? `${up}/` : up;
+  })();
+
+  return (
+    <DropdownMenu open={open} onOpenChange={setOpen}>
+      <DropdownMenuTrigger asChild>
+        <button
+          type="button"
+          title={`${rootPath}\nTrocar a raiz do explorer`}
+          className="flex min-w-0 flex-1 cursor-pointer items-center truncate rounded-sm text-xs font-medium text-foreground/80 outline-none transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-primary/40"
+        >
+          <img
+            src={folderIconUrl(basename(rootPath), false)}
+            alt=""
+            height={15}
+            width={15}
+            className="mx-1.5 shrink-0"
+          />
+          <span className="truncate">{basename(rootPath)}</span>
+          <HugeiconsIcon
+            icon={ArrowDown01Icon}
+            size={12}
+            strokeWidth={2}
+            className="ml-0.5 shrink-0 opacity-60"
+          />
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start" className="max-h-80 w-56 overflow-y-auto">
+        {parent ? (
+          <DropdownMenuItem onSelect={() => onNavigateRoot(parent)}>
+            <HugeiconsIcon icon={ArrowUp01Icon} size={14} strokeWidth={1.75} />
+            <span className="truncate">{basename(parent) || parent}</span>
+          </DropdownMenuItem>
+        ) : null}
+        {home ? (
+          <DropdownMenuItem onSelect={() => onNavigateRoot(home)}>
+            <HugeiconsIcon icon={Home03Icon} size={14} strokeWidth={1.75} />
+            Home
+          </DropdownMenuItem>
+        ) : null}
+        {(parent || home) && <DropdownMenuSeparator />}
+        {drives === null ? (
+          <div className="px-2 py-1.5 text-xs text-muted-foreground">
+            Procurando drives…
+          </div>
+        ) : drives.length === 0 ? (
+          <div className="px-2 py-1.5 text-xs text-muted-foreground">
+            Nenhum drive montado
+          </div>
+        ) : (
+          drives.map((drive) => (
+            <DropdownMenuItem key={drive} onSelect={() => onNavigateRoot(drive)}>
+              <HugeiconsIcon icon={HardDriveIcon} size={14} strokeWidth={1.75} />
+              {drive.replace(/\/$/, "")}
+            </DropdownMenuItem>
+          ))
+        )}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}

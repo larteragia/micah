@@ -130,8 +130,7 @@ fn natural_cmp(a: &str, b: &str) -> Ordering {
 /// (files and dirs) are hidden unless `show_hidden` is set. `git_decorations`
 /// opts into the per-entry `gitignored` flag; off by default so non-explorer
 /// callers pay nothing.
-#[tauri::command]
-pub fn fs_read_dir(
+pub fn fs_read_dir_blocking(
     path: String,
     show_hidden: bool,
     git_decorations: Option<bool>,
@@ -213,12 +212,36 @@ pub fn fs_read_dir(
     Ok(entries)
 }
 
-/// Lists immediate subdirectories of `path`. Kept for the CwdBreadcrumb.
+/// Mounted filesystem roots for the root switchers. Windows: drive letters as
+/// `X:/`, mapped network drives included. Other platforms have a single root,
+/// so the list is empty and the UI hides it.
 ///
-/// Symlinks to directories are included (matches shell `cd` semantics).
-/// Hidden entries are filtered by dot-prefix only.
+/// `GetLogicalDrives` on purpose, never `is_dir()` per letter: probing a
+/// mapped network drive whose host is asleep makes the SMB redirector stall
+/// for tens of seconds, and the bitmask is a purely local read. A dead mapped
+/// drive still lists — the error then surfaces on the click, where the caller
+/// already has a toast.
+fn list_drives_blocking() -> Vec<String> {
+    #[cfg(windows)]
+    {
+        let mask = unsafe { windows_sys::Win32::Storage::FileSystem::GetLogicalDrives() };
+        (0..26u32)
+            .filter(|bit| mask & (1 << bit) != 0)
+            .map(|bit| format!("{}:/", (b'A' + bit as u8) as char))
+            .collect()
+    }
+    #[cfg(not(windows))]
+    {
+        Vec::new()
+    }
+}
+
 #[tauri::command]
-pub fn list_subdirs(
+pub async fn fs_list_drives() -> Vec<String> {
+    list_drives_blocking()
+}
+
+pub fn list_subdirs_blocking(
     path: String,
     show_hidden: bool,
     workspace: Option<WorkspaceEnv>,
@@ -247,10 +270,64 @@ pub fn list_subdirs(
     Ok(dirs)
 }
 
+// Thin async fronts: directory reads over SMB cost one round-trip per entry,
+// and a non-async command runs inline on the main thread — expanding a big
+// NAS folder would freeze the window. Same note as search.rs/grep.rs.
+
+/// Lists immediate children of `path`. See `fs_read_dir_blocking`.
+#[tauri::command]
+pub async fn fs_read_dir(
+    path: String,
+    show_hidden: bool,
+    git_decorations: Option<bool>,
+    workspace: Option<WorkspaceEnv>,
+) -> Result<Vec<DirEntry>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        fs_read_dir_blocking(path, show_hidden, git_decorations, workspace)
+    })
+    .await
+    .map_err(|e| format!("read_dir task: {e}"))?
+}
+
+/// Lists immediate subdirectories of `path`. Kept for the CwdBreadcrumb.
+///
+/// Symlinks to directories are included (matches shell `cd` semantics).
+/// Hidden entries are filtered by dot-prefix only.
+#[tauri::command]
+pub async fn list_subdirs(
+    path: String,
+    show_hidden: bool,
+    workspace: Option<WorkspaceEnv>,
+) -> Result<Vec<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        list_subdirs_blocking(path, show_hidden, workspace)
+    })
+    .await
+    .map_err(|e| format!("subdirs task: {e}"))?
+}
+
 #[cfg(test)]
 mod tests {
     use super::natural_cmp;
     use std::cmp::Ordering;
+
+    #[cfg(windows)]
+    #[test]
+    fn drives_are_well_formed_and_include_the_system_drive() {
+        let drives = super::list_drives_blocking();
+        assert!(drives.iter().any(|d| d == "C:/"));
+        for d in &drives {
+            assert_eq!(d.len(), 3);
+            assert!(d.ends_with(":/"));
+            assert!(d.chars().next().unwrap().is_ascii_uppercase());
+        }
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn drives_list_is_empty_off_windows() {
+        assert!(super::list_drives_blocking().is_empty());
+    }
 
     fn sorted(mut v: Vec<&str>) -> Vec<&str> {
         v.sort_by(|a, b| natural_cmp(a, b));
