@@ -26,15 +26,24 @@ export const BROWSER_MAX_WIDTH = 1600;
 export const BROWSER_HOME = "https://search.brave.com";
 
 /**
- * v5 discards every width written before the two ways this value could be
- * poisoned were closed. First the layout feedback loop, which persisted the
- * result of a bad initial layout on every non-interactive pass until the stored
- * width sat at `BROWSER_MAX_WIDTH`. Then the one that survived it: a plain click
- * on the divider counted as a drag, so the click alone committed whatever width
- * the panel happened to have. Neither fix can heal a value already on disk, so
+ * v9 discards every width written before the degenerate-group guard existed.
+ * The poisonings all shared one shape: some code read or wrote the width while
+ * the panel group was not laid out at a believable size — the 800x600 bootstrap
+ * window, a minimized window (the group collapses to ~150px), or a drag ending
+ * over a half-restored layout. A width sampled there is garbage, and garbage
+ * persisted once comes back on every launch. The fix (refusing to enforce or
+ * persist against a degenerate group) cannot heal a value already on disk, so
  * the key version is the migration.
  */
-const WIDTH_KEY = "micah.browser.width.v5";
+const WIDTH_KEY = "micah.browser.width.v9";
+/**
+ * Below this, the group is not a real layout: the window's own minimum is
+ * 860px while the panel exists, so anything narrower is the bootstrap window,
+ * a minimized window, or a mid-restore frame. Widths must be neither enforced
+ * against it (resize() converts px to a percentage of the group, so a 560px ask
+ * against a 157px group stores a garbage percentage) nor persisted from it.
+ */
+const GROUP_SANE_MIN_WIDTH = 860;
 const ENABLED_KEY = "micah.browser.enabled";
 const URL_KEY = "micah.browser.url";
 /** Reading back the webview's own URL is the only thing that catches pushState. */
@@ -42,8 +51,6 @@ const URL_POLL_MS = 700;
 /** Attach retries: the first paint can measure a rect the layout has not settled. */
 const ATTACH_RETRY_MS = 400;
 const ATTACH_MAX_ATTEMPTS = 8;
-/** Frames to keep re-asserting the panel width before giving up. */
-const WIDTH_APPLY_MAX_ATTEMPTS = 30;
 
 export type CdpInfo = {
   schema: number;
@@ -103,23 +110,6 @@ export function readBrowserEnabled(): boolean {
   if (stored === "1") return true;
   if (stored === "0") return false;
   return IS_WINDOWS;
-}
-
-/**
- * The initial size as a percentage of the window.
- *
- * A pixel `defaultSize` is not resolvable on the first commit — the group has
- * not measured itself yet — and a panel with no resolvable size becomes the
- * elastic one, swallowing everything the other panels' minimums leave behind.
- * A percentage needs no measurement, so it lands right on the first paint.
- */
-export function initialBrowserPercent(
-  widthPx: number,
-  windowWidth: number,
-): string {
-  if (!Number.isFinite(windowWidth) || windowWidth <= 0) return "25%";
-  const pct = (widthPx / windowWidth) * 100;
-  return `${Math.min(80, Math.max(10, pct)).toFixed(2)}%`;
 }
 
 export function readBrowserUrl(): string {
@@ -184,23 +174,12 @@ export function useBrowserPanel({
   );
 
   const widthRef = useRef(readBrowserWidth());
-  // Computed once: re-deriving it on every render would fight the user's drag.
-  const [firstSize] = useState(() =>
-    initialBrowserPercent(widthRef.current, window.innerWidth),
-  );
-  const everMountedRef = useRef(false);
-  // The percentage is a workaround for one specific moment: the very first
-  // commit, when the group has not measured itself and a pixel size resolves to
-  // nothing. On a later mount, closing and reopening the panel, the group is
-  // already measured and the percentage is the wrong unit: it was derived from
-  // the window width at startup and comes back as the wrong number of pixels.
-  const initialSize = everMountedRef.current
-    ? `${widthRef.current}px`
-    : firstSize;
-
-  useEffect(() => {
-    if (mounted) everMountedRef.current = true;
-  }, [mounted]);
+  // A pixel size, not a percentage of the window. The window is created at
+  // 800x600 and only restored to its real geometry after the first paint, so a
+  // percentage sampled at mount is a percentage of the bootstrap window: 560 of
+  // 800 is 70%, and the group keeps the percentage when it later widens, which
+  // is how the panel ended up at its maximum width on every launch.
+  const initialSize = `${widthRef.current}px`;
   const widthTimerRef = useRef(0);
   const lastBoundsRef = useRef<Bounds | null>(null);
   const lastUrlRef = useRef(url);
@@ -223,13 +202,28 @@ export function useBrowserPanel({
     dispatchSuppression({ type: "release", source });
   }, []);
 
-  // Only a real drag may change the stored width. The panel group reports
-  // `isUserInteraction` for layout passes that no user caused, and trusting it
-  // created a feedback loop: a bad initial layout got persisted, then read back
-  // as the next session's starting width, and the panel grew every launch.
+  /** The group's laid-out width, or 0 while the panel is not in the DOM. */
+  const groupWidth = useCallback(
+    () =>
+      hostRef.current?.closest<HTMLElement>("[data-group]")?.offsetWidth ?? 0,
+    [],
+  );
+
+  /**
+   * Commit a width the user actually dragged to.
+   *
+   * This is deliberately not wired to the group's layout event. That event
+   * reports `isUserInteraction` for passes no user caused, and every guard bolted
+   * onto it leaked: a bad layout got stored, read back as the next session's
+   * starting width, and the panel came back wrong on every launch. The end of the
+   * gesture is the only moment that is unambiguously the user's.
+   */
   const persistWidth = useCallback(
-    (next: number, isUserInteraction: boolean) => {
-      if (!isUserInteraction || !draggingRef.current || next <= 0) return;
+    (next: number) => {
+      // A width read while the group is degenerate (minimized window,
+      // mid-restore frame) is garbage, and persisted garbage comes back on
+      // every launch. Refusing it here is what keeps the stored value clean.
+      if (next <= 0 || groupWidth() < GROUP_SANE_MIN_WIDTH) return;
       widthRef.current = clampWidth(next);
       if (widthTimerRef.current) window.clearTimeout(widthTimerRef.current);
       widthTimerRef.current = window.setTimeout(() => {
@@ -237,7 +231,7 @@ export function useBrowserPanel({
         writeStored(WIDTH_KEY, String(widthRef.current));
       }, 200);
     },
-    [],
+    [groupWidth],
   );
 
   const setEnabled = useCallback((next: boolean) => {
@@ -245,34 +239,66 @@ export function useBrowserPanel({
     setEnabledState(next);
   }, []);
 
-  // Neither `defaultSize` nor a single `resize()` in pixels survives the first
-  // commit: the group has not measured itself yet, so a pixel size resolves to
-  // nothing and this panel silently becomes the elastic one — swallowing every
-  // pixel the other panels' minimums leave behind. So the width is applied and
-  // then *verified*, retrying until the group answers with the size we asked
-  // for. Anything less is a panel that is usually, but not always, right.
-  useEffect(() => {
-    if (!mounted) return;
-    let frame = 0;
-    let attempts = 0;
-    const apply = () => {
+  /**
+   * Drive the panel to the stored width and verify it got there.
+   *
+   * `resize("560px")` is open-loop: it converts pixels to a percentage against
+   * panel measurements that can be one layout behind, so a single call can land
+   * near the target instead of on it — that is where every 437/716/1313 in the
+   * telemetry came from. Each kick therefore acts, re-reads on the next frame,
+   * and acts again, up to a small bound. It stands down during a drag so it can
+   * never fight the user, and it refuses to act against a degenerate group
+   * (minimized window, bootstrap window), where the conversion is garbage.
+   */
+  const enforceFrameRef = useRef(0);
+  const enforceWidth = useCallback(() => {
+    let tries = 0;
+    const tick = () => {
       const panel = panelRef.current;
+      if (!panel || draggingRef.current) return;
+      if (groupWidth() < GROUP_SANE_MIN_WIDTH) return;
       const target = widthRef.current;
-      if (panel) {
-        const current = panel.getSize().inPixels;
-        if (Math.abs(current - target) <= 1) return;
-        panel.resize(`${target}px`);
-      }
-      if (++attempts < WIDTH_APPLY_MAX_ATTEMPTS) {
-        frame = requestAnimationFrame(apply);
+      const size = panel.getSize().inPixels;
+      if (Math.abs(size - target) <= 1) return;
+      panel.resize(`${target}px`);
+      if (++tries <= 8) {
+        enforceFrameRef.current = requestAnimationFrame(tick);
       }
     };
-    frame = requestAnimationFrame(apply);
-    return () => cancelAnimationFrame(frame);
+    cancelAnimationFrame(enforceFrameRef.current);
+    enforceFrameRef.current = requestAnimationFrame(tick);
+  }, [groupWidth]);
+
+  // `defaultSize` covers the first mount. It does not cover reopening the panel:
+  // the group remembers the last layout for a given set of panel ids and prefers
+  // it over `defaultSize`. Nor does it cover a group that was too narrow to
+  // honour the width when the panel mounted. Both of those are "the group
+  // changed size", so that is what this listens to, rather than racing a fixed
+  // number of frames.
+  useEffect(() => {
+    if (!mounted) return;
+    enforceWidth();
+    // The group, not the window: the app can start minimized or restored to a
+    // size the window manager only settles on later, and the first layout is
+    // then computed against a group too narrow to hold the width, which clamps
+    // the panel to its minimum. Watching the group catches every one of those,
+    // including a zoom change, which resizes the group without resizing the
+    // window. Each event kicks a fresh act-and-verify loop.
+    const group = hostRef.current?.closest<HTMLElement>(
+      '[data-slot="resizable-panel-group"]',
+    );
+    const observer = group ? new ResizeObserver(enforceWidth) : null;
+    if (group && observer) observer.observe(group);
+    window.addEventListener("resize", enforceWidth);
+    return () => {
+      cancelAnimationFrame(enforceFrameRef.current);
+      observer?.disconnect();
+      window.removeEventListener("resize", enforceWidth);
+    };
     // `attached` is here because the panel is re-created on remount, and a panel
     // that came back at the wrong width is the same bug as one that started at
     // the wrong width.
-  }, [mounted, attached]);
+  }, [mounted, attached, enforceWidth]);
 
   const retry = useCallback(() => {
     setError(null);
@@ -460,29 +486,55 @@ export function useBrowserPanel({
     if (!mounted) return;
     // Only movement while the handle is held counts as a drag, so a stray click
     // on the divider cannot commit a width.
+    // The library starts a divider drag from its own window-level hit test,
+    // which accepts pointers a few pixels to either side of the 1px separator
+    // element. A React handler on the separator never fires for those, so the
+    // gesture has to be detected the same way the library detects it: by
+    // proximity to the panel's right edge, on window capture.
+    const down = (e: PointerEvent) => {
+      if (e.button !== 0) return;
+      const panel = hostRef.current?.closest<HTMLElement>("[data-panel]");
+      if (!panel) return;
+      const r = panel.getBoundingClientRect();
+      if (
+        Math.abs(e.clientX - r.right) <= 8 &&
+        e.clientY >= r.top &&
+        e.clientY <= r.bottom
+      ) {
+        suppress("handle-drag");
+      }
+    };
     const move = () => {
       if (pointerDownRef.current) draggingRef.current = true;
     };
     const end = () => {
+      const dragged = draggingRef.current;
       pointerDownRef.current = false;
+      // Commit before releasing the stand-down. The library has already
+      // applied the gesture's final layout by pointerup, and enforcement
+      // starts pulling the panel back to the stored target the moment
+      // `draggingRef` clears — persisting first is what makes the dragged
+      // width the new target instead of the thing enforcement undoes.
+      if (dragged) {
+        const panel = panelRef.current;
+        if (panel) persistWidth(panel.getSize().inPixels);
+      }
+      draggingRef.current = false;
       release("handle-drag");
-      // Cleared a beat later: the group's final layout event lands after the
-      // pointer is already up, and that one is the size worth keeping.
-      window.setTimeout(() => {
-        draggingRef.current = false;
-      }, 250);
     };
+    window.addEventListener("pointerdown", down, true);
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", end);
     window.addEventListener("pointercancel", end);
     window.addEventListener("blur", end);
     return () => {
+      window.removeEventListener("pointerdown", down, true);
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", end);
       window.removeEventListener("pointercancel", end);
       window.removeEventListener("blur", end);
     };
-  }, [mounted, release]);
+  }, [mounted, release, persistWidth, suppress]);
 
   // The address bar reads the webview, because `pushState` fires no navigation
   // event and every SPA the panel is meant for navigates that way.
@@ -534,6 +586,7 @@ export function useBrowserPanel({
   return {
     hostRef,
     panelRef,
+    enforceWidth,
     initialSize,
     enabled,
     setEnabled,

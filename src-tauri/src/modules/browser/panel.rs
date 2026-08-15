@@ -49,7 +49,7 @@ fn pick_free_port() -> Result<u16, String> {
 
 /// Chromium writes the real port here when told to listen on 0, and it is also
 /// the only trustworthy source when the requested port was taken.
-fn devtools_active_port(profile: &PathBuf) -> Option<u16> {
+fn devtools_active_port(profile: &std::path::Path) -> Option<u16> {
     let raw = std::fs::read_to_string(profile.join("DevToolsActivePort")).ok()?;
     raw.lines().next()?.trim().parse::<u16>().ok()
 }
@@ -125,6 +125,7 @@ fn browser_args(port: u16) -> String {
 /// any webview with IPC (settings, a second window) could attach or steal the
 /// panel belonging to another.
 #[tauri::command]
+#[allow(clippy::too_many_arguments)] // x/y/width/height are one rectangle; a struct would only rename the eight
 pub async fn browser_attach(
     app: tauri::AppHandle,
     caller: tauri::Window,
@@ -281,7 +282,7 @@ async fn attach_inner(
 /// if it stays silent is `DevToolsActivePort` consulted — by then Chromium has
 /// had time to write it, and since it was deleted before the webview was created,
 /// whatever is in it belongs to *this* session.
-async fn resolve_cdp(port: u16, profile: &PathBuf) -> Result<(u16, String), String> {
+async fn resolve_cdp(port: u16, profile: &std::path::Path) -> Result<(u16, String), String> {
     match probe_cdp(port, CDP_PROBE_TIMEOUT).await {
         Ok(ws) => Ok((port, ws)),
         Err(first) => match devtools_active_port(profile) {
@@ -373,7 +374,7 @@ pub async fn browser_go(app: tauri::AppHandle, delta: i32) -> Result<(), String>
         .get_webview(WEBVIEW_LABEL)
         .ok_or_else(|| "the browser panel is not attached".to_string())?;
     webview
-        .eval(&format!("history.go({delta})"))
+        .eval(format!("history.go({delta})"))
         .map_err(|e| e.to_string())
 }
 

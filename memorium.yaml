@@ -1,23 +1,125 @@
-# Memória permanente do projeto Micah (fork do Micah).
+# Memoria permanente do projeto Micah.
 # LEI: nada entra aqui sem o bloco `prova` — identificador de artefato lido DO AR.
-# Fonte da telemetria de achados (seção 4.1 do Quadro de Cards).
+# Fonte da telemetria de achados (secao 4.1 do Quadro de Cards).
 
 projeto:
   nome: Micah
-  origem: fork de larteragia/micah
+  versao: 0.8.6
+  bundle_id: app.orvoton.micah
+  origem: fork de crynta/terax-ai, publicado em github.com/larteragia/micah
   caminho: C:\Users\Zigfriad\projetos\micah
-  runtime: Tauri v2 + wry (WebView2 no Windows) + React 19 + xterm
-  producao: |
-    App desktop. "No ar" = o binário src-tauri/target/release/micah.exe
-    reconstruído e em execução, reportando o mesmo build id publicado.
+  branch_de_trabalho: main
+  autor: Rodrigo Campos
+  licenca: Apache-2.0
+
+# ---------------------------------------------------------------------------
+# LEI ZERO: O PROJETO ESTA FECHADO
+# ---------------------------------------------------------------------------
+# Ordem do Rodrigo, 2026-08-14. O escopo tecnico do Micah esta definido: a
+# stack abaixo E o projeto. O trabalho daqui para frente e FAZER FUNCIONAR o
+# que ja esta dentro dele, nao acrescentar tecnologia.
+#
+# O que isso proibe, sem excecao:
+#   - dependencia nova (npm ou cargo), inclusive "so uma pequena"
+#   - runtime, framework, banco, servidor ou protocolo novo
+#   - trocar uma peca da stack por outra "melhor"
+#   - reescrever um subsistema que ja funciona
+#
+# O que isso obriga:
+#   - resolver com o que ja esta declarado nas listas `stack` abaixo
+#   - se parecer que falta uma biblioteca, procurar de novo: quase sempre a
+#     capacidade ja esta no bundle (CodeMirror, xterm, radix, zustand,
+#     tauri-plugin-store, wry) e o que falta e a fiacao
+#   - se realmente nao houver caminho sem dependencia nova, PARAR e escrever o
+#     motivo no card. A decisao e do Rodrigo, nunca do executor.
+
+stack:
+  runtime:
+    - Tauri 2.11.5 (feature `unstable` atras da feature de crate `browser-panel`)
+    - wry 0.55.1
+    - no Windows a webview e WebView2 (Edge/Chromium); webview2-com 0.38.2 e
+      windows 0.61.3 entram por wry, nao sao dependencia direta
+    - Rust edition 2021, workspace com crates/micah-cli e crates/micah-control-protocol
+  frontend:
+    - React 19.2 + TypeScript 6 + Vite 8
+    - Tailwind v4 (config em src/App.css via @theme, sem tailwind.config)
+    - shadcn/ui (style radix-luma, base mist) + radix-ui 1.6 + hugeicons
+    - zustand 5 (estado), react-resizable-panels 4.12 (layout), motion (animacao)
+    - sonner 2 (toast), cmdk 1.1 (paleta), streamdown 2.5 (markdown do chat)
+    - @tanstack/react-virtual 3.14 (listas virtualizadas)
+  terminal:
+    - xterm 6 + addons fit / search / serialize / web-links / webgl
+    - portable-pty 0.9 no Rust; ConPTY no Windows com SPAWN_LOCK e Job Object
+    - LEI DE RECURSO: o pool de renderers WebGL tem teto 5
+      (terminal/lib/rendererPool.ts). Nenhuma superficie nova pode pedir um
+      contexto WebGL: ela despejaria o renderer de um terminal vivo.
+  editor:
+    - CodeMirror 6 completo (state, view, language, search, merge, lint,
+      autocomplete, vim) com langs js/ts, rust, python, go, css, html, json,
+      markdown, php, vue, svelte, legacy-modes
+    - temas @uiw/codemirror-theme-* + temas locais em editor/lib/cmThemes.ts
+    - codemirror-languageserver 1.22 para LSP
+  ai:
+    - Vercel AI SDK v6 (`ai` 6.0.x) + @ai-sdk/react
+    - providers instalados: anthropic, openai, openai-compatible, google, xai,
+      cerebras, groq
+    - provider proprio `claude-code` em src/cavalo/claudeCode/ (roda a CLI
+      oficial `claude`, sem chave, sem cobranca por token)
+    - zod 4 para schema de tool
+  persistencia:
+    - tauri-plugin-store (micah-spaces.json, micah-ai-sessions.json, settings)
+    - localStorage para o que precisa ser lido no primeiro paint (largura e
+      modo do painel esquerdo, flag do browser)
+    - chaves de API no keychain do SO via keyring 3.6 (servico `micah-ai`)
+  plugins_tauri:
+    - opener, log, os, store, process, notification, autostart, clipboard-manager,
+      updater, window-state
+  ferramentas:
+    - pnpm 11.9 (nunca npm/npx/yarn)
+    - biome 2.5 (lint e format), vitest 4.1 (teste), playwright 1.62 (E2E do
+      painel de browser, via CDP)
+    - size-limit e knip para orcamento de bundle e codigo morto
+
+leis_do_projeto:
+  - O PROJETO ESTA FECHADO (ver LEI ZERO acima)
+  - OpenRouter e banido; o provider padrao e claude-code (sem chave, preco fixo)
+  - PROIBIDO qualquer LLM com cobranca por uso/token
+  - a sidebar de arquivos fica a DIREITA
+  - as abas vivem no painel Tabs da sidebar, nao em barra no topo da janela
+  - o canto superior esquerdo e o seletor do painel esquerdo, em ordem fixa:
+    Browser | Editor | Ai Viewer
+  - o Smart App Control do Windows precisa ficar desligado para o binario rodar
+  - sem em-dash e sem emoji em codigo, comentario, commit ou doc
+  - imports sempre `@/...` no frontend, nunca relativo entre modulos
+
+arquitetura_em_uma_linha: |
+  Rust dono de todo acesso ao SO (pty, fs, git, shell, lsp, net, secrets,
+  browser), webview so fala por invoke(); frontend em modulos autocontidos sob
+  src/modules/<area> com barrel index.ts, e App.tsx apenas coordena.
+  A logica nova mora em funcao pura e testada; comando Tauri e componente React
+  ficam finos.
+
+verificacao:
+  frontend: pnpm lint && pnpm check-types && pnpm test
+  rust: cd src-tauri && cargo clippy --all-targets --locked -- -D warnings && cargo test --locked
+  rollback: cd src-tauri && cargo check --no-default-features   # sem browser-panel
   build:
     frontend: pnpm build
-    binario: pnpm tauri build  (ou cargo build --release em src-tauri)
-    trava: o build falha enquanto micah.exe estiver em execução (arquivo em uso)
-  leis_do_projeto:
-    - OpenRouter é banido; provider padrão é claude-code (sem chave, plano fixo)
-    - Smart App Control do Windows precisa ficar desligado para o binário rodar
-    - sidebar de arquivos fica à DIREITA
-    - as abas vivem no painel Tabs da sidebar, não em barra no topo da janela
+    binario: pnpm tauri build --no-bundle
+    trava: o build falha enquanto micah.exe estiver em execucao (arquivo em uso)
+  producao: |
+    App desktop. "No ar" = o binario src-tauri/target/release/micah.exe
+    reconstruido e em execucao, reportando o mesmo build id publicado
+    (comando browser_build_id, de MICAH_BUILD_ID emitido no build.rs).
+  prova_de_ui: |
+    A UI do Micah NAO e alcancavel por CDP: so a webview-filha do painel de
+    browser recebe --remote-debugging-port. Prova de comportamento se faz de
+    fora do app, com os tres scripts em scripts/:
+      window-shot.ps1   captura a janela (PrintWindow + PW_RENDERFULLCONTENT)
+      window-click.ps1  clica em coordenada de cliente (SendInput)
+      window-key.ps1    envia atalho de teclado
+    Os tres declaram SetProcessDPIAware: sem isso, num monitor a 150% a captura
+    vira um recorte do canto superior esquerdo e o clique erra o alvo, os dois
+    reportando sucesso.
 
 rondas_pdi: []

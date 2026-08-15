@@ -1400,9 +1400,13 @@ export default function App() {
               onLayoutChanged={(_, { isUserInteraction }) => {
                 const width = sidebarRef.current?.getSize().inPixels ?? 0;
                 persistSidebarWidth(width, isUserInteraction);
-                const browserWidth =
-                  browser.panelRef.current?.getSize().inPixels ?? 0;
-                browser.persistWidth(browserWidth, isUserInteraction);
+                // The library can move the left panel in layouts the user never
+                // dragged: a click on a divider leaves its internal drag state
+                // active, and the next hover applies a recomputed layout as if
+                // it were user input. Enforcement self-no-ops at the target and
+                // stands down during a real drag, so wiring it to every layout
+                // event is safe, and it converges instead of looping.
+                browser.enforceWidth();
               }}
             >
               {leftPanel.open && (
@@ -1412,6 +1416,7 @@ export default function App() {
                   defaultSize={browser.initialSize}
                   minSize={`${BROWSER_MIN_WIDTH}px`}
                   maxSize={`${BROWSER_MAX_WIDTH}px`}
+                  groupResizeBehavior="preserve-pixel-size"
                 >
                 <div className="relative h-full min-h-0">
                   {/* Only the browser surface stays mounted across modes: it is
@@ -1472,13 +1477,20 @@ export default function App() {
                   carries the drag. Rendered as a sibling, not wrapped in a
                   fragment with the panel: the group reads its children in DOM
                   order and a wrapper changes what it sees. */}
-              {leftPanel.open && (
-                <ResizableHandle
-                  withHandle
-                  onPointerDown={() => browser.suppress("handle-drag")}
-                />
-              )}
-              <ResizablePanel id="workspace" defaultSize="45%" minSize="25%">
+              {/* The drag gesture is detected inside useBrowserPanel by a
+                  window-level hit test on the panel's right edge — the same
+                  way the library itself detects it. A React handler here would
+                  double-arm the gesture and misses the pointerdowns that land
+                  a few pixels off the 1px separator element. */}
+              {leftPanel.open && <ResizableHandle withHandle />}
+              {/* No `defaultSize` on purpose. It is the only way this library
+                  has of saying "this panel takes whatever is left": leftover
+                  space goes exclusively to panels that declare no size. With a
+                  size on all three the declared percentages get rescaled to sum
+                  to 100 and the remainder lands on the first panel that will
+                  take it, which is the left one. A group also needs at least one
+                  panel left on `preserve-relative-size`, and this is it. */}
+              <ResizablePanel id="workspace" minSize="25%">
                 <div className="flex h-full min-h-0 flex-col">
                   <div className="relative min-h-0 flex-1">
                     <WorkspaceSurface
@@ -1527,6 +1539,7 @@ export default function App() {
                 }
                 minSize={`${SIDEBAR_MIN_WIDTH}px`}
                 maxSize={`${SIDEBAR_MAX_WIDTH}px`}
+                groupResizeBehavior="preserve-pixel-size"
                 collapsible
                 collapsedSize={0}
                 onResize={(size) => {

@@ -2,7 +2,14 @@
 
 - **Data**: 2026-08-14
 - **Autor do card**: Rodrigo Campos
-- **Coluna**: Fazendo
+- **Coluna**: A fazer
+
+> **2026-08-14, MAXIMO 01 CARD POR VEZ**: E1 (moldura dos tres modos) esta
+> entregue e provada (commit efcd8f4). O card volta para a fila enquanto
+> `browser-pdi-2026-08-14.md` (card ativo, ordem do Rodrigo: "resolva o browser
+> apenas com um pdi") fecha o modo Browser; E2+ (Editor, Ai Viewer) continuam
+> daqui. O E4 de favoritos/menu deste card foi SUPERADO pelo PDI (correcao 21
+> da auditoria do PDI): valem os nomes de artefato do PDI.
 
 ## Descricao
 

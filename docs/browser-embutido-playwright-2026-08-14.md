@@ -2,7 +2,12 @@
 
 - **Data**: 2026-08-14
 - **Autor do card**: Rodrigo Campos
-- **Coluna**: Fazendo
+- **Coluna**: A fazer
+
+> **2026-08-14, MAXIMO 01 CARD POR VEZ**: os itens em aberto deste card
+> (criterios 1 e 2 — largura do painel) foram absorvidos e FECHADOS pelo B1 de
+> `browser-pdi-2026-08-14.md`, que e o card ativo. Este card volta para a fila
+> so para a re-validacao final dos criterios ja aprovados, quando o PDI fechar.
 
 ## Descrição
 

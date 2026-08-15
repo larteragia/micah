@@ -1,0 +1,10 @@
+﻿import { chromium } from "playwright";
+import { readDiscovery } from "./browser-cdp.mjs";
+const d = await readDiscovery();
+const b = await chromium.connectOverCDP(d.ws_endpoint ?? `http://127.0.0.1:${d.port}`);
+const page = b.contexts()[0].pages()[0];
+const vp = page.viewportSize();
+const ev = await page.evaluate(() => ({ iw: window.innerWidth, ow: window.outerWidth, dpr: devicePixelRatio, sx: window.screenX, sy: window.screenY }));
+const shot = await page.screenshot({ path: "docs/proof/left-panel/b1-page.png" });
+console.log(JSON.stringify({ viewportSize: vp, ...ev, shotBytes: shot.length }));
+await b.close();

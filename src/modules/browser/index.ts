@@ -4,7 +4,6 @@ export {
   BROWSER_HOME,
   BROWSER_MAX_WIDTH,
   BROWSER_MIN_WIDTH,
-  initialBrowserPercent,
   readBrowserEnabled,
   readBrowserWidth,
   useBrowserPanel,
