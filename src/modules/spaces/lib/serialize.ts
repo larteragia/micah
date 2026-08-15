@@ -4,12 +4,13 @@ import {
   type PaneNode,
   type SplitDir,
 } from "@/modules/terminal/lib/panes";
-import type {
-  EditorTab,
-  MarkdownTab,
-  PreviewTab,
-  Tab,
-  TerminalTab,
+import {
+  type EditorTab,
+  type MarkdownTab,
+  type PreviewTab,
+  type Tab,
+  tabPane,
+  type TerminalTab,
 } from "@/modules/tabs/lib/useTabs";
 
 export type SerializedNode =
@@ -102,6 +103,28 @@ export function serializeTabs(tabs: Tab[]): SerializedTab[] {
     if (s) out.push(s);
   }
   return out;
+}
+
+/** The three active indexes one space's flush persists. `legacy` counts every
+ * serializable tab of the space (what pre-pane binaries read and what
+ * `activeTabIndex` has always meant); the pane indexes count only that pane's
+ * serializable tabs. -1 = the active tab is not serializable (or absent). */
+export function paneActiveIndexes(
+  group: Tab[],
+  activeId: number,
+  activeLeftId: number | null,
+): { legacy: number; workspace: number; left: number } {
+  const serializable = group.filter(isSerializableTab);
+  const workspacePool = serializable.filter((t) => tabPane(t) === "workspace");
+  const leftPool = serializable.filter((t) => tabPane(t) === "left");
+  return {
+    legacy: serializable.findIndex((t) => t.id === activeId),
+    workspace: workspacePool.findIndex((t) => t.id === activeId),
+    left:
+      activeLeftId === null
+        ? -1
+        : leftPool.findIndex((t) => t.id === activeLeftId),
+  };
 }
 
 type HydratedTree = {

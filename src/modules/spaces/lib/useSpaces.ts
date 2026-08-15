@@ -10,6 +10,7 @@ import {
   saveActiveId,
   saveSpacesList,
   type SpaceMeta,
+  type SpaceState,
 } from "./store";
 
 type CreateInput = {
@@ -26,10 +27,20 @@ type State = {
   // Per-space active tab index loaded from disk, so persistence preserves it
   // for spaces the user never visits this session.
   initialActiveIndex: Record<string, number>;
+  // Same, for the per-pane indexes: saveState replaces the whole key, so a
+  // background-space rewrite must carry these forward or they evaporate.
+  initialActiveByPane: Record<
+    string,
+    NonNullable<SpaceState["activeTabIndexByPane"]>
+  >;
   hydrate: (
     spaces: SpaceMeta[],
     activeId: string | null,
     initialActiveIndex?: Record<string, number>,
+    initialActiveByPane?: Record<
+      string,
+      NonNullable<SpaceState["activeTabIndexByPane"]>
+    >,
   ) => void;
   create: (input: CreateInput) => SpaceMeta;
   rename: (id: string, name: string) => void;
@@ -45,9 +56,21 @@ export const useSpaces = create<State>((set, get) => ({
   activeId: null,
   hydrated: false,
   initialActiveIndex: {},
+  initialActiveByPane: {},
 
-  hydrate: (spaces, activeId, initialActiveIndex = {}) => {
-    set({ spaces, activeId, initialActiveIndex, hydrated: true });
+  hydrate: (
+    spaces,
+    activeId,
+    initialActiveIndex = {},
+    initialActiveByPane = {},
+  ) => {
+    set({
+      spaces,
+      activeId,
+      initialActiveIndex,
+      initialActiveByPane,
+      hydrated: true,
+    });
   },
 
   create: (input) => {

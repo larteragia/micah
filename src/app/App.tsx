@@ -63,6 +63,7 @@ import {
   useBrowserPanel,
 } from "@/modules/browser";
 import {
+  LeftEditorArea,
   LeftPanelEmpty,
   LeftPanelSwitcher,
   useLeftPanel,
@@ -94,7 +95,11 @@ import {
   useWindowTitle,
   useWorkspaceCwd,
 } from "@/modules/tabs";
-import { DEFAULT_SPACE_ID } from "@/modules/tabs/lib/useTabs";
+import {
+  DEFAULT_SPACE_ID,
+  type Pane,
+  tabPane,
+} from "@/modules/tabs/lib/useTabs";
 import {
   clearFocusedTerminal,
   disposeSession,
@@ -146,6 +151,8 @@ export default function App() {
     tabs,
     activeId,
     setActiveId,
+    activeByPane,
+    setActiveLeft,
     allocId,
     booted,
     replaceTabs,
@@ -190,6 +197,16 @@ export default function App() {
   // (e.g. cdInNewTab) read the latest pane state instead of a stale closure.
   const tabsRef = useRef(tabs);
   const activeIdRef = useRef(activeId);
+  const activeLeftIdRef = useRef(activeByPane.left);
+
+  // Which panel the user last focused; keyboard-driven editor actions and
+  // Cmd+F resolve their target through this, not through the workspace's
+  // active tab, or they would be dead exactly in the mode made for editing.
+  const [focusedPane, setFocusedPane] = useState<Pane>("workspace");
+  const focusedPaneRef = useRef<Pane>("workspace");
+  useEffect(() => {
+    focusedPaneRef.current = focusedPane;
+  }, [focusedPane]);
 
   const activeTerminalTab = useMemo(() => {
     const t = tabs.find((x) => x.id === activeId);
@@ -249,8 +266,9 @@ export default function App() {
   useLayoutEffect(() => {
     tabsRef.current = tabs;
     activeIdRef.current = activeId;
+    activeLeftIdRef.current = activeByPane.left;
     activeSpaceIdRef.current = activeSpaceId;
-  }, [tabs, activeId, activeSpaceId]);
+  }, [tabs, activeId, activeByPane.left, activeSpaceId]);
   const sourceControlSpaceId = activeSpaceId ?? DEFAULT_SPACE_ID;
 
   const handleWorkspaceChange = useCallback(
@@ -277,6 +295,7 @@ export default function App() {
   useSpacePersistence({
     tabs,
     activeId,
+    activeLeftId: activeByPane.left,
     activeSpaceId: activeSpaceId ?? DEFAULT_SPACE_ID,
     enabled: spacesHydrated,
   });
@@ -294,7 +313,11 @@ export default function App() {
       .getState()
       .spaces.find((s) => s.id === activeSpaceId);
     if (meta) void adoptWorkspaceEnv(meta.env);
-    const inSpace = tabsRef.current.filter((t) => t.spaceId === activeSpaceId);
+    // The left panel's active tab is kept consistent by the invariant effect
+    // below (it fires for space switches too), not here.
+    const inSpace = tabsRef.current.filter(
+      (t) => t.spaceId === activeSpaceId && tabPane(t) === "workspace",
+    );
     if (inSpace.length === 0) return;
     // Keep the active tab if it already belongs to the newly active space (a
     // cross-space jump set it explicitly); else fall to the space's last tab.
@@ -311,10 +334,52 @@ export default function App() {
 
   const [switcherOpen, setSwitcherOpen] = useState(false);
 
-  const spaceTabs = useMemo(
-    () => tabs.filter((t) => t.spaceId === (activeSpaceId ?? DEFAULT_SPACE_ID)),
-    [tabs, activeSpaceId],
+  // The workspace's tab universe: everything except the left panel's tabs.
+  // The strip, the Ctrl+Tab switcher, Cmd+1..9 and the center surface all
+  // read from here; left tabs have their own strip inside the left panel.
+  const workspaceTabs = useMemo(
+    () => tabs.filter((t) => tabPane(t) === "workspace"),
+    [tabs],
   );
+
+  const spaceTabs = useMemo(
+    () =>
+      workspaceTabs.filter(
+        (t) => t.spaceId === (activeSpaceId ?? DEFAULT_SPACE_ID),
+      ),
+    [workspaceTabs, activeSpaceId],
+  );
+
+  // The stacks get every left tab, across spaces, exactly like the center
+  // gets workspaceTabs: an unmounted editor is a destroyed unsaved buffer.
+  // Only the strip is scoped to the active space.
+  const allLeftTabs = useMemo(
+    () => tabs.filter((t) => tabPane(t) === "left"),
+    [tabs],
+  );
+  const leftTabs = useMemo(
+    () =>
+      allLeftTabs.filter(
+        (t) => t.spaceId === (activeSpaceId ?? DEFAULT_SPACE_ID),
+      ),
+    [allLeftTabs, activeSpaceId],
+  );
+  const activeLeftTab = useMemo(
+    () => leftTabs.find((t) => t.id === activeByPane.left),
+    [leftTabs, activeByPane.left],
+  );
+
+  // Invariant, not a transition: whenever the active left tab stops existing
+  // in the active space's left pool (space switch, cross-space drag in the
+  // overview, close), repoint to the pool's last tab or clear.
+  useEffect(() => {
+    const valid =
+      activeByPane.left !== null &&
+      leftTabs.some((t) => t.id === activeByPane.left);
+    if (valid) return;
+    const next = leftTabs[leftTabs.length - 1]?.id ?? null;
+    if (next !== activeByPane.left) setActiveLeft(next);
+  }, [leftTabs, activeByPane.left, setActiveLeft]);
 
   const {
     sidebarRef,
@@ -340,6 +405,45 @@ export default function App() {
     mounted: leftPanel.open,
     visible: browserVisible,
   });
+
+  // The left pane only holds editor focus while it is actually showing the
+  // editor; closing the panel or switching its mode hands focus-based routing
+  // back to the workspace, so shortcuts never act on a hidden editor.
+  const leftEditorShowing = leftPanel.open && leftPanel.mode === "editor";
+  useEffect(() => {
+    if (!leftEditorShowing) setFocusedPane("workspace");
+  }, [leftEditorShowing]);
+
+  // Closing the panel unmounts the left editor stacks (the whole panel leaves
+  // the tree), which would destroy an unsaved buffer. Refuse and say why; the
+  // user saves and closes, nothing is lost silently.
+  const toggleLeftPanel = useCallback(() => {
+    if (leftPanel.open) {
+      const dirtyLeft = tabsRef.current.find(
+        (t) => tabPane(t) === "left" && t.kind === "editor" && t.dirty,
+      );
+      if (dirtyLeft) {
+        toast.warning(`Save ${dirtyLeft.title} first`, {
+          description:
+            "The left panel has an unsaved editor; closing it would discard those changes.",
+        });
+        return;
+      }
+    }
+    leftPanel.setOpen(!leftPanel.open);
+  }, [leftPanel.open, leftPanel.setOpen]);
+
+  // The raw focus state can point at a pane with nothing to act on (last left
+  // tab just closed, focus parked on browser chrome). Every keyboard routing
+  // decision derives from this instead of trusting focusedPane directly.
+  const effectivePane: Pane =
+    focusedPane === "left" && leftEditorShowing && activeLeftTab
+      ? "left"
+      : "workspace";
+  const effectivePaneRef = useRef<Pane>("workspace");
+  useEffect(() => {
+    effectivePaneRef.current = effectivePane;
+  }, [effectivePane]);
 
   const [newEditorOpen, setNewEditorOpen] = useState(false);
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
@@ -387,6 +491,16 @@ export default function App() {
     );
     setActiveEditorHandle(editorRefs.current.get(activeId) ?? null);
   }, [activeId, activeLeafId]);
+
+  const [leftEditorHandle, setLeftEditorHandle] =
+    useState<EditorPaneHandle | null>(null);
+  useEffect(() => {
+    setLeftEditorHandle(
+      activeByPane.left !== null
+        ? (editorRefs.current.get(activeByPane.left) ?? null)
+        : null,
+    );
+  }, [activeByPane.left]);
 
   const handleSearchReady = useCallback(
     (leafId: number, addon: SearchAddon) => {
@@ -469,7 +583,7 @@ export default function App() {
   const getSwitcherOrder = useCallback(() => {
     const space = activeSpaceId ?? DEFAULT_SPACE_ID;
     const inSpace = tabsRef.current
-      .filter((t) => t.spaceId === space)
+      .filter((t) => t.spaceId === space && tabPane(t) === "workspace")
       .map((t) => t.id);
     const present = new Set(inSpace);
     const ordered = mruRef.current.filter((id) => present.has(id));
@@ -681,15 +795,24 @@ export default function App() {
     [newTab],
   );
 
+  // With the left panel open in Editor mode, files go to the left pane; the
+  // conversation with the AI keeps the center. A closed panel (or any other
+  // mode) behaves exactly as before.
+  const editorPaneTarget: Pane =
+    leftPanel.open && leftPanel.mode === "editor" ? "left" : "workspace";
+
   const handleOpenFile = useCallback(
     (path: string, pin?: boolean) => {
       // Markdown opens in its rendered view by default; a per-tab toggle flips
       // it to the raw editor. Other files default to preview (pin=false);
       // explicit actions like context-menu "Open" pass pin=true to persist.
-      if (isMarkdownPath(path)) newMarkdownTab(path);
-      else openFileTab(path, pin ?? false);
+      if (isMarkdownPath(path)) newMarkdownTab(path, editorPaneTarget);
+      else
+        openFileTab(path, pin ?? false, {
+          pane: editorPaneTarget,
+        });
     },
-    [openFileTab, newMarkdownTab],
+    [openFileTab, newMarkdownTab, editorPaneTarget],
   );
 
   const openLaunchFiles = useCallback(
@@ -775,9 +898,12 @@ export default function App() {
     return null;
   })();
   const explorerActiveFilePath =
-    activeTab?.kind === "editor" || activeTab?.kind === "markdown"
-      ? activeTab.path
-      : null;
+    effectivePane === "left" &&
+    (activeLeftTab?.kind === "editor" || activeLeftTab?.kind === "markdown")
+      ? activeLeftTab.path
+      : activeTab?.kind === "editor" || activeTab?.kind === "markdown"
+        ? activeTab.path
+        : null;
   const isRepositoryContextCurrent = useCallback(
     (spaceId: string, workspaceKey: string) => {
       const currentSpaceId =
@@ -866,6 +992,14 @@ export default function App() {
   );
 
   const handleCloseTabOrPane = useCallback(() => {
+    // Cmd+W follows the focused pane like every other keyboard action; a
+    // terminal with a live process in the center must not die to a close
+    // aimed at the left editor.
+    if (effectivePaneRef.current === "left") {
+      const leftId = activeLeftIdRef.current;
+      if (leftId !== null) void handleClose(leftId);
+      return;
+    }
     const t = tabsRef.current.find((x) => x.id === activeId);
     if (t?.kind === "terminal" && leafIds(t.paneTree).length > 1) {
       closeActivePane(activeId);
@@ -889,6 +1023,16 @@ export default function App() {
     },
     [setActiveId, focusPane],
   );
+
+  // Editor keyboard actions target the focused pane's active editor; a
+  // markdown tab on the left simply has no handle registered and no-ops.
+  const focusedEditorHandle = useCallback(() => {
+    const targetId =
+      effectivePaneRef.current === "left"
+        ? activeLeftIdRef.current
+        : activeIdRef.current;
+    return targetId !== null ? editorRefs.current.get(targetId) : undefined;
+  }, []);
 
   const shortcutHandlers = useMemo<ShortcutHandlers>(
     () => ({
@@ -932,7 +1076,12 @@ export default function App() {
       "blocks.prev": () => navigateFocusedBlocks(-1),
       "blocks.next": () => navigateFocusedBlocks(1),
       "search.focus": () => {
-        const editor = editorRefs.current.get(activeId);
+        const targetId =
+          effectivePaneRef.current === "left"
+            ? activeLeftIdRef.current
+            : activeIdRef.current;
+        const editor =
+          targetId !== null ? editorRefs.current.get(targetId) : undefined;
         if (editor) editor.openSearch();
         else searchInlineRef.current?.focus();
       },
@@ -956,12 +1105,10 @@ export default function App() {
       "view.zoomOut": zoomOut,
       "view.zoomReset": zoomReset,
       "view.zenMode": () => setZenMode((v) => !v),
-      "editor.undo": () => editorRefs.current.get(activeId)?.undo(),
-      "editor.redo": () => editorRefs.current.get(activeId)?.redo(),
-      "editor.aiComplete": () =>
-        editorRefs.current.get(activeId)?.triggerAiComplete(),
-      "editor.codeComplete": () =>
-        editorRefs.current.get(activeId)?.triggerCodeComplete(),
+      "editor.undo": () => focusedEditorHandle()?.undo(),
+      "editor.redo": () => focusedEditorHandle()?.redo(),
+      "editor.aiComplete": () => focusedEditorHandle()?.triggerAiComplete(),
+      "editor.codeComplete": () => focusedEditorHandle()?.triggerCodeComplete(),
     }),
     [
       activeId,
@@ -989,6 +1136,7 @@ export default function App() {
       zoomOut,
       zoomReset,
       activateAgentTarget,
+      focusedEditorHandle,
     ],
   );
 
@@ -1005,7 +1153,9 @@ export default function App() {
         id === "editor.aiComplete" ||
         id === "editor.codeComplete"
       ) {
-        return activeTab?.kind !== "editor";
+        const focusedTab =
+          effectivePane === "left" ? activeLeftTab : activeTab;
+        return focusedTab?.kind !== "editor";
       }
       if (id === "ai.askSelection") {
         const target =
@@ -1046,7 +1196,7 @@ export default function App() {
       }
       return false;
     },
-    [activeTab],
+    [activeTab, activeLeftTab, effectivePane],
   );
 
   useGlobalShortcuts(shortcutHandlers, { isDisabled: shortcutsDisabled });
@@ -1073,6 +1223,7 @@ export default function App() {
         editorRefs.current.delete(id);
       }
       if (id === activeId) setActiveEditorHandle(h);
+      if (id === activeLeftIdRef.current) setLeftEditorHandle(h);
     },
     [activeId],
   );
@@ -1123,8 +1274,13 @@ export default function App() {
         (t) => t.kind === "terminal" && hasLeaf(t.paneTree, leafId),
       );
       if (!tab || tab.kind !== "terminal") return;
-      // Last pane of the last tab: quit instead of respawning a shell.
-      if (leafIds(tab.paneTree).length === 1 && all.length === 1) {
+      // Last pane of the last WORKSPACE tab: quit instead of respawning a
+      // shell. Left-panel editors do not keep the window alive on their own;
+      // the app close guard still catches dirty ones.
+      const workspaceCount = all.filter(
+        (t) => tabPane(t) === "workspace",
+      ).length;
+      if (leafIds(tab.paneTree).length === 1 && workspaceCount === 1) {
         void getCurrentWindow().close();
       } else {
         closePaneByLeaf(leafId);
@@ -1144,6 +1300,18 @@ export default function App() {
   );
 
   const searchTarget = useMemo<SearchTarget>(() => {
+    // The pane with focus wins: Cmd+F while editing on the left must search
+    // that editor, not whatever the workspace happens to show.
+    if (
+      effectivePane === "left" &&
+      activeLeftTab?.kind === "editor" &&
+      leftEditorHandle
+    )
+      return {
+        kind: "editor",
+        handle: leftEditorHandle,
+        focus: () => leftEditorHandle.focus(),
+      };
     if (isTerminalTab && activeLeafId !== null && activeSearchAddon)
       return {
         kind: "terminal",
@@ -1164,6 +1332,9 @@ export default function App() {
       };
     return null;
   }, [
+    effectivePane,
+    activeLeftTab,
+    leftEditorHandle,
     isTerminalTab,
     isEditorTab,
     isGitHistoryTab,
@@ -1233,11 +1404,19 @@ export default function App() {
     (tabId: number) => {
       const t = tabsRef.current.find((x) => x.id === tabId);
       if (!t) return;
-      setActiveId(tabId);
+      if (tabPane(t) === "left") {
+        // A left tab activates in its own pane and brings its panel along;
+        // the workspace's active tab stays put.
+        setActiveLeft(tabId);
+        leftPanel.setMode("editor");
+        leftPanel.setOpen(true);
+      } else {
+        setActiveId(tabId);
+      }
       useSpaces.getState().setActive(t.spaceId);
       setSwitcherOpen(false);
     },
-    [setActiveId],
+    [setActiveId, setActiveLeft, leftPanel.setMode, leftPanel.setOpen],
   );
 
   const spaceSwitcher = (
@@ -1276,7 +1455,7 @@ export default function App() {
     () =>
       commandPaletteOpen
         ? createCommandItems({
-            tabs,
+            tabs: workspaceTabs,
             activeId,
             searchTarget,
             explorerRoot,
@@ -1312,7 +1491,7 @@ export default function App() {
       commandPaletteOpen,
       browser.enabled,
       browser.setEnabled,
-      tabs,
+      workspaceTabs,
       activeId,
       searchTarget,
       explorerRoot,
@@ -1423,7 +1602,7 @@ export default function App() {
           {!zenMode && (
             <Header
               onToggleSidebar={toggleSidebar}
-              onToggleLeftPanel={() => leftPanel.setOpen(!leftPanel.open)}
+              onToggleLeftPanel={toggleLeftPanel}
               leftPanelOpen={leftPanel.open}
               onOpenCommandPalette={() => openCommandPalette("commands")}
               onActivateAgent={onActivateAgent}
@@ -1498,14 +1677,32 @@ export default function App() {
                       />
                     </div>
                   ) : null}
-                  {leftPanel.mode === "editor" ? (
-                    <div className="absolute inset-0 bg-card">
-                      <LeftPanelEmpty
-                        title="No file open here"
-                        hint="Files opened from the sidebar land in this panel while Editor is selected."
-                      />
-                    </div>
-                  ) : null}
+                  {/* Stays MOUNTED across mode switches, hidden with
+                      `invisible`: unmounting would destroy unsaved CodeMirror
+                      buffers, the same rule the center's WorkspaceSurface and
+                      the browser surface above already follow. Focus capture
+                      lives here, not on the whole panel, so browser chrome
+                      never claims the editor pane. */}
+                  <div
+                    className={
+                      leftPanel.mode === "editor"
+                        ? "absolute inset-0 bg-card"
+                        : "invisible pointer-events-none absolute inset-0 bg-card"
+                    }
+                    aria-hidden={leftPanel.mode !== "editor"}
+                    onFocusCapture={() => setFocusedPane("left")}
+                  >
+                    <LeftEditorArea
+                      tabs={leftTabs}
+                      stackTabs={allLeftTabs}
+                      activeId={activeByPane.left}
+                      onSelect={setActiveLeft}
+                      onClose={(id) => void handleClose(id)}
+                      registerHandle={registerEditorHandle}
+                      onDirtyChange={handleEditorDirty}
+                      onSetMarkdownView={setMarkdownView}
+                    />
+                  </div>
                   {leftPanel.mode === "ai-viewer" ? (
                     <div className="absolute inset-0 bg-card">
                       <LeftPanelEmpty
@@ -1540,10 +1737,13 @@ export default function App() {
                   the editor is the star of the moment. Still the group's one
                   elastic panel (no defaultSize). */}
               <ResizablePanel id="workspace" minSize="160px">
-                <div className="flex h-full min-h-0 flex-col">
+                <div
+                  className="flex h-full min-h-0 flex-col"
+                  onFocusCapture={() => setFocusedPane("workspace")}
+                >
                   <div className="relative min-h-0 flex-1">
                     <WorkspaceSurface
-                      tabs={tabs}
+                      tabs={workspaceTabs}
                       activeId={activeId}
                       activeTab={activeTab}
                       registerTerminalHandle={registerTerminalHandle}
@@ -1731,7 +1931,9 @@ export default function App() {
             open={newEditorOpen}
             onOpenChange={setNewEditorOpen}
             rootPath={explorerRoot ?? home}
-            onCreated={(path) => openFileTab(path)}
+            onCreated={(path) =>
+              openFileTab(path, true, { pane: editorPaneTarget })
+            }
           />
 
           <UpdaterDialog />

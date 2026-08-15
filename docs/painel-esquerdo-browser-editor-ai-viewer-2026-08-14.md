@@ -340,6 +340,40 @@ control bridge nao repassa `pane` externo (`openControlFile` desestrutura
 campos nomeados); `newMarkdownTab` tem um unico call site e nao e passada como
 handler.
 
+### Auditoria da implementacao de E2b (auditor Opus independente) — 2026-08-15
+
+**Veredito: 7 achados (1 bloqueante), todos aceitos e corrigidos; 12 suspeitas
+investigadas e derrubadas com prova.** O auditor reverificou por conta propria
+check-types 0, vitest 798/798 e lint na baseline de 99 warnings, e validou as
+duas divergencias deliberadas do plano como defensaveis (TabsPanel sem
+activeByPane: "melhor que o plano, fecha o achado 1 de E2a por construcao").
+Pos-correcao: check-types 0, 798/798, lint 99 (baseline).
+
+| # | Categoria | Achado | Correcao aplicada |
+|---|-----------|--------|-------------------|
+| A1 | Regressao / Estado (**bloqueava**) | Trocar o modo do painel, fecha-lo ou trocar de espaco DESMONTAVA o editor esquerdo e descartava edicoes nao salvas em silencio (buffer CM mora em estado de componente, sem flush no unmount; `editorAutoSave` default false; `dirty` ainda true apontando para buffer destruido) | Pilhas do editor esquerdo agora ficam MONTADAS: recebem `stackTabs` = todas as abas left de todos os espacos (como o centro recebe workspaceTabs), escondem com `invisible` fora do modo editor, e o estado vazio e overlay, nao substituto; fechar o painel (que desmonta o ResizablePanel inteiro) com editor sujo passa a ser recusado com toast dizendo o porque |
+| A2 | Regressao | `focusedPane` travava em "left" via browser chrome ou ao fechar a ultima aba left, matando editor.undo/redo/aiComplete/codeComplete do centro (contra o proprio motivo da linha E2b e o criterio 14) | `effectivePane` derivado (`focusedPane==="left" && leftEditorShowing && activeLeftTab`) usado em TODAS as rotas de teclado; `onFocusCapture` movido do painel inteiro para o container do modo editor |
+| A3 | Regressao | Arrastar aba left para outro espaco no overview deixava `activeByPane.left` orfao (painel em branco sem cura): `moveTabToSpace` compara com o ativo do WORKSPACE e o efeito de troca de espaco so rodava em mudanca de espaco | O repontuamento virou INVARIANTE: efeito que dispara sempre que o left ativo deixa de existir no pool do espaco ativo (cobre troca de espaco, drag cross-space e fechamento); o bloco no efeito de troca de espaco saiu |
+| A4 | Estado e persistencia | `activeTabIndexByPane` era apagado sempre que um espaco NAO-ativo regravava (herança b cumprida pela metade: sem seed, o spread condicional omitia a chave e saveState substitui a chave inteira) | Seed do disco: `useSpaces.hydrate` ganhou `initialActiveByPane`, o boot o alimenta, e o flush carrega `prev.byPane` adiante para espacos de fundo |
+| A5 | Regressao | Cmd+W nao roteava pelo pane com foco: com foco no editor esquerdo, fechava aba do CENTRO (podendo ser terminal com processo vivo) | `handleCloseTabOrPane` roteia por `effectivePane`; left fecha via handleClose (guardas de sujo/processo intactas) |
+| A6 | Volume | `setActiveId` perdeu o bail-out do useState (objeto novo sempre): ativacao no-op re-renderizava o App e invalidava `activeByPane` (disparo extra do efeito de aquecimento) | Bail-out nos dois setters: valor igual devolve `prev` |
+| A7 | Estado (doc) | Comentarios de `store.ts` ficaram falsos apos E2b (mesma classe do achado 3 de E2a, invertida) | Reescritos para o contrato real (legacy = dois panes, para binario antigo; byPane = ativo calculado + fundo preservado por seed) |
+
+**Aviso de integridade registrado pelo auditor**: durante a checagem ele rodou
+`biome format --write ./src` por engano (137 arquivos) e RESTAUROU a arvore ao
+byte (diff stat identico, suite e lint reconferidos). Sem efeito residual.
+
+**Divergencia adicional anotada (parecer do auditor)**: "ir para definicao" do
+LSP a partir de um editor esquerdo abre o resultado no CENTRO
+(`openContentHit` e o navegador do LSP). Nao fere criterio escrito; fica
+registrado como comportamento deliberado ate um card proprio decidir o
+contrario.
+
+**Pendente para fechar E2b**: prova no ar em binario de release (Ctrl+Tab,
+Cmd+1..9, guarda de fechamento, restore, Cmd+F, criterios 6 e 7) — o binario
+com E2b+correcoes esta buildado; a prova de clique sera colhida na proxima
+reabertura do app, sem derrubar a sessao viva do Rodrigo.
+
 ## Validacao independente
 
 <a preencher>

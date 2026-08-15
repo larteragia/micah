@@ -20,7 +20,13 @@ import {
   swapLeafInDirection,
 } from "@/modules/terminal/lib/panes";
 import { disposeSession } from "@/modules/terminal/lib/useTerminalSession";
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  type SetStateAction,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 
 // Matches the renderer slot pool size — over this we'd evict an active leaf.
 export const MAX_PANES_PER_TAB = 4;
@@ -32,6 +38,10 @@ export type Pane = "workspace" | "left";
 export function tabPane(tab: { pane?: "left" }): Pane {
   return tab.pane ?? "workspace";
 }
+
+/** Active tab per pane. The workspace always has one; the left panel may be
+ * empty. `workspace` is the same id the rest of the app knows as `activeId`. */
+export type ActiveByPane = { workspace: number; left: number | null };
 
 type TabBase = {
   spaceId: string;
@@ -519,13 +529,39 @@ export function useTabs(initial?: Partial<TerminalTab>) {
       },
     ];
   });
-  const [activeId, setActiveId] = useState(1);
+  const [activeByPane, setActiveByPane] = useState<ActiveByPane>({
+    workspace: 1,
+    left: null,
+  });
+  const activeId = activeByPane.workspace;
   // Gates warming until boot resolves the restore, so no shell spawns before it.
   const [booted, setBooted] = useState(false);
   const nextIdRef = useRef(3);
   const activeSpaceIdRef = useRef(DEFAULT_SPACE_ID);
   const tabsRef = useRef(tabs);
   const activeIdRef = useRef(activeId);
+
+  // Same contract as the old useState setter, so every existing consumer
+  // (including the functional updates in the close paths) keeps working.
+  // Bail out on no-op values like useState would, or every re-activation of
+  // the already-active tab would re-render the whole App.
+  const setActiveId = useCallback((value: SetStateAction<number>) => {
+    setActiveByPane((prev) => {
+      const next =
+        typeof value === "function" ? value(prev.workspace) : value;
+      return next === prev.workspace ? prev : { ...prev, workspace: next };
+    });
+  }, []);
+
+  const setActiveLeft = useCallback(
+    (value: SetStateAction<number | null>) => {
+      setActiveByPane((prev) => {
+        const next = typeof value === "function" ? value(prev.left) : value;
+        return next === prev.left ? prev : { ...prev, left: next };
+      });
+    },
+    [],
+  );
 
   useEffect(() => {
     tabsRef.current = tabs;
@@ -535,15 +571,23 @@ export function useTabs(initial?: Partial<TerminalTab>) {
     activeIdRef.current = activeId;
   }, [activeId]);
 
-  // Activating a cold tab warms it: one choke point for every activation path.
+  // Activating a cold tab warms it: one choke point for every activation path,
+  // in either pane.
   useEffect(() => {
     if (!booted) return;
+    const ids = [activeByPane.workspace, activeByPane.left].filter(
+      (x): x is number => x !== null,
+    );
     setTabs((curr) => {
-      const t = curr.find((x) => x.id === activeId);
-      if (!t?.cold) return curr;
-      return curr.map((x) => (x.id === activeId ? { ...x, cold: false } : x));
+      let changed = false;
+      const next = curr.map((x) => {
+        if (!ids.includes(x.id) || !x.cold) return x;
+        changed = true;
+        return { ...x, cold: false };
+      });
+      return changed ? next : curr;
     });
-  }, [activeId, booted]);
+  }, [activeByPane, booted]);
 
   const allocId = useCallback(() => nextIdRef.current++, []);
 
@@ -553,13 +597,16 @@ export function useTabs(initial?: Partial<TerminalTab>) {
     activeSpaceIdRef.current = spaceId;
   }, []);
 
-  const replaceTabs = useCallback((next: Tab[], nextActiveId: number) => {
-    if (next.length === 0) return;
-    tabsRef.current = next;
-    activeIdRef.current = nextActiveId;
-    setTabs(next);
-    setActiveId(nextActiveId);
-  }, []);
+  const replaceTabs = useCallback(
+    (next: Tab[], nextActiveId: number, nextLeftId: number | null = null) => {
+      if (next.length === 0) return;
+      tabsRef.current = next;
+      activeIdRef.current = nextActiveId;
+      setTabs(next);
+      setActiveByPane({ workspace: nextActiveId, left: nextLeftId });
+    },
+    [],
+  );
 
   // Appends a cold terminal tab to a space without stealing focus, so the
   // overview can populate a space in place; it spawns when first opened.
@@ -602,7 +649,7 @@ export function useTabs(initial?: Partial<TerminalTab>) {
       }
       return true;
     },
-    [],
+    [setActiveId],
   );
 
   // Positions a tab next to a target tab, inheriting the target's space. Returns
@@ -635,7 +682,7 @@ export function useTabs(initial?: Partial<TerminalTab>) {
       }
       return true;
     },
-    [],
+    [setActiveId],
   );
 
   const removeTabsForSpace = useCallback(
@@ -657,7 +704,7 @@ export function useTabs(initial?: Partial<TerminalTab>) {
       });
       for (const lid of toDispose) disposeSession(lid);
     },
-    [],
+    [setActiveId],
   );
 
   const newTab = useCallback((cwd?: string) => {
@@ -677,7 +724,7 @@ export function useTabs(initial?: Partial<TerminalTab>) {
     ]);
     setActiveId(tabId);
     return tabId;
-  }, []);
+  }, [setActiveId]);
 
   const newBlockTab = useCallback((cwd?: string) => {
     const tabId = nextIdRef.current++;
@@ -697,7 +744,7 @@ export function useTabs(initial?: Partial<TerminalTab>) {
     ]);
     setActiveId(tabId);
     return tabId;
-  }, []);
+  }, [setActiveId]);
 
   useEffect(() => {
     if (!import.meta.env?.DEV || typeof window === "undefined") return;
@@ -730,7 +777,7 @@ export function useTabs(initial?: Partial<TerminalTab>) {
       setActiveId(tabId);
       return { tabId, leafIds: agentLeafIds };
     },
-    [],
+    [setActiveId],
   );
 
   const newAgentTab = useCallback(
@@ -759,7 +806,7 @@ export function useTabs(initial?: Partial<TerminalTab>) {
     ]);
     setActiveId(tabId);
     return tabId;
-  }, []);
+  }, [setActiveId]);
 
   /**
    * Opens a file in an editor tab.
@@ -785,10 +832,16 @@ export function useTabs(initial?: Partial<TerminalTab>) {
       );
       tabsRef.current = plan.tabs;
       setTabs(plan.tabs);
-      if (activate) setActiveId(plan.tabId);
+      if (activate) {
+        if ((options.pane ?? "workspace") === "left") {
+          setActiveLeft(plan.tabId);
+        } else {
+          setActiveId(plan.tabId);
+        }
+      }
       return plan.tabId;
     },
-    [],
+    [setActiveId, setActiveLeft],
   );
 
   /**
@@ -846,7 +899,7 @@ export function useTabs(initial?: Partial<TerminalTab>) {
       if (targetId !== null) setActiveId(targetId);
       return targetId as number | null;
     },
-    [],
+    [setActiveId],
   );
 
   const setAiDiffStatus = useCallback(
@@ -880,7 +933,7 @@ export function useTabs(initial?: Partial<TerminalTab>) {
       setActiveId((active) => (target.id === active ? fallback : active));
       return next;
     });
-  }, []);
+  }, [setActiveId]);
 
   const newPreviewTab = useCallback((url: string) => {
     const id = nextIdRef.current++;
@@ -896,7 +949,7 @@ export function useTabs(initial?: Partial<TerminalTab>) {
     ]);
     setActiveId(id);
     return id;
-  }, []);
+  }, [setActiveId]);
 
   // Mirrors tabsRef like openFileTab instead of using a functional update: a
   // batch that opens a markdown file before a regular one (multi-file "Open
@@ -916,10 +969,11 @@ export function useTabs(initial?: Partial<TerminalTab>) {
         tabsRef.current = plan.tabs;
         setTabs(plan.tabs);
       }
-      setActiveId(plan.tabId);
+      if (pane === "left") setActiveLeft(plan.tabId);
+      else setActiveId(plan.tabId);
       return plan.tabId;
     },
-    [],
+    [setActiveId, setActiveLeft],
   );
 
   const setOverrideLanguage = useCallback((id: number, lang: string | null) => {
@@ -991,7 +1045,7 @@ export function useTabs(initial?: Partial<TerminalTab>) {
       setActiveId(plan.targetId);
       return plan.targetId;
     },
-    [],
+    [setActiveId],
   );
 
   const openCommitHistoryTab = useCallback(
@@ -1010,7 +1064,7 @@ export function useTabs(initial?: Partial<TerminalTab>) {
       setActiveId(plan.targetId);
       return plan.targetId;
     },
-    [],
+    [setActiveId],
   );
 
   const openCommitFileDiffTab = useCallback(
@@ -1068,24 +1122,36 @@ export function useTabs(initial?: Partial<TerminalTab>) {
       setActiveId(id);
       return id;
     },
-    [],
+    [setActiveId],
   );
 
-  const closeTab = useCallback((id: number) => {
-    let toDispose: number[] = [];
-    setTabs((curr) => {
-      const fallback = nextActiveInSpace(curr, id);
-      if (fallback === null) return curr;
-      const target = curr.find((t) => t.id === id);
-      if (target?.kind === "terminal") {
-        toDispose = leafIds(target.paneTree);
-      }
-      const next = curr.filter((t) => t.id !== id);
-      setActiveId((active) => (id === active ? fallback : active));
-      return next;
-    });
-    for (const lid of toDispose) disposeSession(lid);
-  }, []);
+  const closeTab = useCallback(
+    (id: number) => {
+      let toDispose: number[] = [];
+      setTabs((curr) => {
+        const target = curr.find((t) => t.id === id);
+        if (!target) return curr;
+        const fallback = nextActiveInSpace(curr, id);
+        // No fallback means last of its pool: the workspace refuses to close
+        // (the window must keep a center tab), the left panel just empties.
+        if (fallback === null && tabPane(target) === "workspace") return curr;
+        if (target.kind === "terminal") {
+          toDispose = leafIds(target.paneTree);
+        }
+        const next = curr.filter((t) => t.id !== id);
+        if (tabPane(target) === "left") {
+          setActiveLeft((active) => (id === active ? fallback : active));
+        } else {
+          setActiveId((active) =>
+            id === active ? (fallback as number) : active,
+          );
+        }
+        return next;
+      });
+      for (const lid of toDispose) disposeSession(lid);
+    },
+    [setActiveId, setActiveLeft],
+  );
 
   const updateTab = useCallback((id: number, patch: TabPatch) => {
     setTabs((t) =>
@@ -1144,7 +1210,7 @@ export function useTabs(initial?: Partial<TerminalTab>) {
         : tabs[idx];
       if (t) setActiveId(t.id);
     },
-    [tabs],
+    [tabs, setActiveId],
   );
 
   /** Update a leaf's cwd; mirror to the tab's `cwd` when the leaf is active.
@@ -1290,7 +1356,7 @@ export function useTabs(initial?: Partial<TerminalTab>) {
       );
     });
     if (didRemove) disposeSession(leafId);
-  }, []);
+  }, [setActiveId]);
 
   const closeActivePane = useCallback((tabId: number): boolean => {
     let closedTab = false;
@@ -1321,7 +1387,7 @@ export function useTabs(initial?: Partial<TerminalTab>) {
     });
     if (removedLeaf !== null) disposeSession(removedLeaf);
     return closedTab;
-  }, []);
+  }, [setActiveId]);
 
   const resetWorkspace = useCallback((cwd?: string) => {
     const tabId = nextIdRef.current++;
@@ -1345,7 +1411,7 @@ export function useTabs(initial?: Partial<TerminalTab>) {
     });
     setActiveId(tabId);
     for (const lid of toDispose) disposeSession(lid);
-  }, []);
+  }, [setActiveId]);
 
   const reorderTabByGap = useCallback((fromId: number, toGapIndex: number) => {
     setTabs((prev) => reorderTabsByGap(prev, fromId, toGapIndex));
@@ -1355,6 +1421,8 @@ export function useTabs(initial?: Partial<TerminalTab>) {
     tabs,
     activeId,
     setActiveId,
+    activeByPane,
+    setActiveLeft,
     allocId,
     booted,
     replaceTabs,

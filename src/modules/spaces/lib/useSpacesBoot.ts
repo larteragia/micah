@@ -1,7 +1,7 @@
 import { native } from "@/modules/ai/lib/native";
 import { usePreferencesStore } from "@/modules/settings/preferences";
 import type { Tab } from "@/modules/tabs";
-import { DEFAULT_SPACE_ID } from "@/modules/tabs/lib/useTabs";
+import { DEFAULT_SPACE_ID, tabPane } from "@/modules/tabs/lib/useTabs";
 import { isLeaf, type PaneNode } from "@/modules/terminal/lib/panes";
 import { parseWorkspaceScopeKey, type WorkspaceEnv } from "@/modules/workspace";
 import { useEffect, useRef } from "react";
@@ -16,7 +16,11 @@ type Params = {
   launchCwd: string | null;
   home: string | null;
   allocId: () => number;
-  replaceTabs: (tabs: Tab[], activeId: number) => void;
+  replaceTabs: (
+    tabs: Tab[],
+    activeId: number,
+    leftActiveId?: number | null,
+  ) => void;
   markBooted: () => void;
   setActiveSpaceForNewTabs: (id: string) => void;
   adoptWorkspaceEnv: (env: WorkspaceEnv) => Promise<string | null>;
@@ -97,8 +101,13 @@ export function useSpacesBoot({
         const env = activeSpaceEnv(spaces, active);
         const restoredHome = await adoptWorkspaceEnv(env);
 
-        // Active space must never be empty, else its tab list shows nothing.
-        if (!restored.some((t) => t.spaceId === active)) {
+        // The active space's WORKSPACE strip must never be empty, else the
+        // center shows nothing; left-panel tabs alone do not satisfy this.
+        if (
+          !restored.some(
+            (t) => t.spaceId === active && tabPane(t) === "workspace",
+          )
+        ) {
           const cwd = freshTabCwd(env, restoredHome, launchCwd, home);
           restored.push(freshTerminalTab(active, cwd, allocId));
         }
@@ -126,14 +135,42 @@ export function useSpacesBoot({
         }
 
         const initialActiveIndex: Record<string, number> = {};
-        for (const [id, st] of states)
+        const initialActiveByPane: Record<
+          string,
+          { workspace?: number; left?: number }
+        > = {};
+        for (const [id, st] of states) {
           initialActiveIndex[id] = st.activeTabIndex;
-        useSpaces.getState().hydrate(spaces, active, initialActiveIndex);
+          if (st.activeTabIndexByPane)
+            initialActiveByPane[id] = st.activeTabIndexByPane;
+        }
+        useSpaces
+          .getState()
+          .hydrate(spaces, active, initialActiveIndex, initialActiveByPane);
 
+        const st = states.get(active);
         const inActive = tabsToMount.filter((t) => t.spaceId === active);
-        const idx = states.get(active)?.activeTabIndex ?? 0;
-        const activeTab = inActive[idx] ?? inActive[0] ?? tabsToMount[0];
-        replaceTabs(tabsToMount, activeTab.id);
+        const wsInActive = inActive.filter((t) => tabPane(t) === "workspace");
+        const leftInActive = inActive.filter((t) => tabPane(t) === "left");
+        // Pane-split index first; the legacy index (which counts both panes,
+        // and in pre-pane files is the only one) as fallback. Whatever it
+        // resolves to, the center's active tab must be a workspace tab.
+        const wIdx = st?.activeTabIndexByPane?.workspace;
+        const legacyPick = inActive[st?.activeTabIndex ?? 0];
+        const activeTab =
+          (wIdx !== undefined ? wsInActive[wIdx] : undefined) ??
+          (legacyPick && tabPane(legacyPick) === "workspace"
+            ? legacyPick
+            : undefined) ??
+          wsInActive[0] ??
+          tabsToMount.find((t) => tabPane(t) === "workspace") ??
+          tabsToMount[0];
+        const lIdx = st?.activeTabIndexByPane?.left;
+        const leftActive =
+          (lIdx !== undefined ? leftInActive[lIdx] : undefined) ??
+          leftInActive[leftInActive.length - 1] ??
+          null;
+        replaceTabs(tabsToMount, activeTab.id, leftActive?.id ?? null);
       } catch (e) {
         console.error("[micah] spaces boot failed:", e);
       } finally {

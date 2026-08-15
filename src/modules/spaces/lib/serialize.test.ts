@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
 import type { PaneNode } from "@/modules/terminal/lib/panes";
 import type { Tab } from "@/modules/tabs/lib/useTabs";
-import { hydrateTabs, serializeTabs, type SerializedTab } from "./serialize";
+import {
+  hydrateTabs,
+  paneActiveIndexes,
+  serializeTabs,
+  type SerializedTab,
+} from "./serialize";
 
 function counter(start = 100): () => number {
   let n = start;
@@ -242,5 +247,51 @@ describe("hydrateTabs", () => {
       const [restored] = hydrateTabs(serialized, "s1", counter());
       expect(restored).not.toHaveProperty("pane");
     }
+  });
+});
+
+describe("paneActiveIndexes", () => {
+  const ed = (id: number, pane?: "left"): Tab =>
+    ({
+      id,
+      kind: "editor",
+      spaceId: "s1",
+      ...(pane && { pane }),
+      title: "x",
+      path: `/x/${id}.ts`,
+      dirty: false,
+      preview: false,
+    }) as Tab;
+
+  it("legacy counts both panes, the pane indexes count only their own", () => {
+    // Strip order: [W1, L9, W2, L8] - active W2, activeLeft L8.
+    const group = [ed(1), ed(9, "left"), ed(2), ed(8, "left")];
+    const ix = paneActiveIndexes(group, 2, 8);
+    expect(ix.legacy).toBe(2);
+    expect(ix.workspace).toBe(1);
+    expect(ix.left).toBe(1);
+  });
+
+  it("skips non-serializable tabs the way the serialized list does", () => {
+    const priv = {
+      id: 5,
+      kind: "terminal",
+      spaceId: "s1",
+      private: true,
+      title: "p",
+      paneTree: { kind: "leaf", id: 50 },
+      activeLeafId: 50,
+    } as Tab;
+    const group = [priv, ed(1), ed(9, "left")];
+    const ix = paneActiveIndexes(group, 1, 9);
+    expect(ix.legacy).toBe(0);
+    expect(ix.workspace).toBe(0);
+    expect(ix.left).toBe(0);
+  });
+
+  it("reports -1 when there is no active left tab", () => {
+    const ix = paneActiveIndexes([ed(1)], 1, null);
+    expect(ix.left).toBe(-1);
+    expect(ix.workspace).toBe(0);
   });
 });

@@ -15,14 +15,15 @@ export type SpaceMeta = {
 
 export type SpaceState = {
   tabs: SerializedTab[];
-  /** Index over ALL serializable tabs of the space, both panes - that is what
-   * useSpacePersistence writes and useSpacesBoot reads today. Splitting it per
-   * pane is E2b work, in lockstep on both sides. */
+  /** LEGACY index over ALL serializable tabs of the space, both panes: kept
+   * exactly so a pre-pane binary reading this file still restores the right
+   * tab. New code prefers activeTabIndexByPane and falls back to this. */
   activeTabIndex: number;
-  /** Per-pane active indexes; optional so pre-pane state stays valid and old
-   * binaries simply ignore it. Indexes count serializable tabs of that pane.
-   * Not written yet (E2b): saveState replaces the whole key, so the writer in
-   * useSpacePersistence must include this field in the same literal. */
+  /** Per-pane active indexes, counted over that pane's serializable tabs.
+   * Optional so pre-pane state stays valid and old binaries ignore it. The
+   * flush computes it for the active space and carries the seeded last-known
+   * value forward for background spaces - saveState replaces the whole key,
+   * so anything left out of that one literal is silently erased. */
   activeTabIndexByPane?: { workspace?: number; left?: number };
 };
 
