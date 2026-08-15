@@ -78,7 +78,7 @@ export function AboutSection() {
             Open-source AI-native terminal emulator
           </span>
           <span className="text-[11px] text-muted-foreground">
-            by Rodrigo Campos from L&apos;Arte Régia
+            by Rodrigo Campos at L&apos;Arte Régia
           </span>
           <span className="mt-1 font-mono text-[11px] text-muted-foreground">
             v{version || "—"}
