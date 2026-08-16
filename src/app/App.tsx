@@ -1003,6 +1003,13 @@ export default function App() {
     [tabs],
   );
 
+  // The viewer observes the tab you are looking at, not every space: the
+  // visible panes of the active terminal tab bound its scope.
+  const visibleLeafIds = useMemo(() => {
+    const t = tabs.find((x) => x.id === activeId);
+    return t?.kind === "terminal" ? leafIds(t.paneTree) : [];
+  }, [tabs, activeId]);
+
   // The Ai Viewer resolves a pane's anchored Claude session through the
   // ref, so the callback stays stable and the viewer never re-renders on
   // unrelated tab churn.
@@ -1733,6 +1740,7 @@ export default function App() {
                         <AiViewerArea
                           resolveLeafResume={resolveLeafResume}
                           anchoredLeaves={anchoredLeaves}
+                          visibleLeafIds={visibleLeafIds}
                         />
                       </div>
                     ) : null}

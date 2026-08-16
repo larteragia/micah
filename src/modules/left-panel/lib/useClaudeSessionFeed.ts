@@ -7,6 +7,12 @@ import {
   parseSessionLine,
   splitSessionChunk,
 } from "./claudeSessionOps";
+import {
+  emptyStreamState,
+  foldStreamItems,
+  parseStreamLine,
+  type StreamState,
+} from "./sessionStream";
 
 type SessionTail = {
   found: boolean;
@@ -26,19 +32,23 @@ const ABSENT_POLL_MS = 3000;
 export type ClaudeFeed = {
   status: "probing" | "feed" | "absent";
   lanes: LaneMap;
+  stream: StreamState;
 };
 
 /**
- * Follow a pane's anchored Claude Code session transcript and expose it as
- * viewer lanes. Polling only runs while the consumer is mounted, and the
+ * Follow a pane's anchored Claude Code session transcript and expose it both
+ * as viewer lanes (per-file) and as the chronological stream (thinking and
+ * every tool call). Polling only runs while the consumer is mounted, and the
  * offset lives here so each poll ships only new bytes over IPC.
  */
 export function useClaudeSessionFeed(sessionId: string | null): ClaudeFeed {
   const [lanes, setLanes] = useState<LaneMap>({});
+  const [stream, setStream] = useState<StreamState>(emptyStreamState);
   const [status, setStatus] = useState<ClaudeFeed["status"]>(
     sessionId ? "probing" : "absent",
   );
   const lanesRef = useRef<LaneMap>({});
+  const streamRef = useRef<StreamState>(emptyStreamState());
 
   useEffect(() => {
     if (!sessionId) {
@@ -52,7 +62,9 @@ export function useClaudeSessionFeed(sessionId: string | null): ClaudeFeed {
     let seq = 0;
     let synced = false;
     lanesRef.current = {};
+    streamRef.current = emptyStreamState();
     setLanes({});
+    setStream(streamRef.current);
     setStatus("probing");
 
     const tick = async () => {
@@ -85,6 +97,12 @@ export function useClaudeSessionFeed(sessionId: string | null): ClaudeFeed {
               lanesRef.current = folded.lanes;
               setLanes(folded.lanes);
             }
+            const items = split.lines.flatMap(parseStreamLine);
+            const nextStream = foldStreamItems(streamRef.current, items);
+            if (nextStream !== streamRef.current) {
+              streamRef.current = nextStream;
+              setStream(nextStream);
+            }
           }
         }
       } catch {
@@ -103,5 +121,5 @@ export function useClaudeSessionFeed(sessionId: string | null): ClaudeFeed {
     };
   }, [sessionId]);
 
-  return { status, lanes };
+  return { status, lanes, stream };
 }

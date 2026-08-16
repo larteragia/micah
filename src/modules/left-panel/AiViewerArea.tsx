@@ -4,6 +4,10 @@ import { leafHasForegroundProcess } from "@/modules/terminal";
 import { cn } from "@/lib/utils";
 import { lazy, Suspense, useEffect, useState, type ReactNode } from "react";
 import { orderedLanes, type LaneKind } from "./lib/aiViewerLanes";
+import {
+  readAiViewerActive,
+  writeAiViewerActive,
+} from "./lib/activation";
 import { useAiViewerStore } from "./lib/useAiViewerStore";
 import { useClaudeSessionFeed } from "./lib/useClaudeSessionFeed";
 import { LeftPanelEmpty } from "./LeftPanelEmpty";
@@ -12,6 +16,11 @@ import { LeftPanelEmpty } from "./LeftPanelEmpty";
 // of the eager startup bundle (locked by the eager-budget test).
 const ReadOnlyStream = lazy(() =>
   import("./ReadOnlyStream").then((m) => ({ default: m.ReadOnlyStream })),
+);
+// The stream view pulls the chat's reasoning/tool rows (hugeicons, radix
+// collapsible); same eager-budget rule.
+const SessionStreamView = lazy(() =>
+  import("./SessionStreamView").then((m) => ({ default: m.SessionStreamView })),
 );
 
 const TERMINAL_POLL_MS = 500;
@@ -25,6 +34,8 @@ const LANE_VERB: Record<LaneKind, string> = {
 
 export type AnchoredLeaf = { leafId: number; resume: string };
 
+type ViewerView = "stream" | "files";
+
 /** What a terminal lane needs to label itself; agent-signal sessions and
  * anchored-but-signalless panes both reduce to this. */
 type LaneMeta = {
@@ -35,29 +46,35 @@ type LaneMeta = {
 };
 
 /**
- * Read-only observation deck: one horizontal lane per working AI instance.
- * The local Micah agent's lanes come from the viewer store the
- * AgentRunBridge feeds (streaming write_file content, edit old/new pairs).
- * A terminal agent's lane shows what its TUI does not: the files it is
- * reading, editing and writing, tailed from the Claude Code session
- * transcript anchored to the pane. The raw terminal buffer is only the
- * fallback when no transcript exists. A pane with an anchored session and a
- * live foreground process counts even when no OSC signal ever arrived
- * (claude launched outside the shell wrapper). Watching only; intervening
- * is the conversation's job.
+ * Read-only observation deck for the AI working in the pane you are looking
+ * at. Off until the user hits Ativar — only then does it tail the Claude
+ * Code session transcript anchored to the visible panes of the active tab
+ * (thinking, every tool call, edits, chronologically), with the per-file
+ * lanes one toggle away. The local Micah agent's lanes come from the viewer
+ * store the AgentRunBridge feeds. The raw terminal buffer is only the
+ * fallback when no transcript exists. Watching only; intervening is the
+ * conversation's job.
  */
 export function AiViewerArea({
   resolveLeafResume,
   anchoredLeaves,
+  visibleLeafIds,
 }: {
   resolveLeafResume?: (leafId: number) => string | null;
   anchoredLeaves?: AnchoredLeaf[];
+  visibleLeafIds?: number[];
 }) {
+  const [active, setActive] = useState(readAiViewerActive);
+  const [view, setView] = useState<ViewerView>("stream");
   const lanes = useAiViewerStore((s) => s.lanes);
   const sessions = useAgentStore((s) => s.sessions);
 
+  const inScope = (leafId: number) =>
+    visibleLeafIds === undefined || visibleLeafIds.includes(leafId);
+
   const localLanes = orderedLanes(lanes);
   const signalled: LaneMeta[] = Object.values(sessions)
+    .filter((s) => inScope(s.leafId))
     .sort((a, b) => a.startedAt - b.startedAt)
     .map((s) => ({
       leafId: s.leafId,
@@ -66,8 +83,11 @@ export function AiViewerArea({
       resume: resolveLeafResume?.(s.leafId) ?? null,
     }));
 
-  const candidates = (anchoredLeaves ?? []).filter((a) => !sessions[a.leafId]);
-  const aliveIds = useAliveLeaves(candidates.map((a) => a.leafId));
+  const candidates = (anchoredLeaves ?? []).filter(
+    (a) => !sessions[a.leafId] && inScope(a.leafId),
+  );
+  // Inactive viewer polls nothing: an empty id list short-circuits the hook.
+  const aliveIds = useAliveLeaves(active ? candidates.map((a) => a.leafId) : []);
   const anchored: LaneMeta[] = candidates
     .filter((a) => aliveIds.includes(a.leafId))
     .map((a) => ({
@@ -77,31 +97,113 @@ export function AiViewerArea({
       resume: a.resume,
     }));
 
-  const terminals = [...signalled, ...anchored];
-  if (localLanes.length === 0 && terminals.length === 0) {
+  const setActivePersisted = (next: boolean) => {
+    writeAiViewerActive(next);
+    setActive(next);
+  };
+
+  if (!active) {
     return (
-      <LeftPanelEmpty
-        title="No AI is working right now"
-        hint="Running agents show up here, one lane each, read only."
-      />
+      <div className="flex h-full min-h-0 flex-col items-center justify-center gap-3 px-6 text-center">
+        <div>
+          <p className="text-sm font-medium text-foreground/80">
+            Ai Viewer desligado
+          </p>
+          <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+            Ativar conecta ao transcript da sessão Claude Code da pane ao
+            lado e mostra o que a TUI não mostra: pensamento, tools e edits,
+            ao vivo. Somente leitura.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={() => setActivePersisted(true)}
+          className={cn(
+            "h-7 cursor-pointer rounded-md bg-primary px-4 text-xs font-medium text-primary-foreground",
+            "transition-colors hover:bg-primary/90",
+            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40",
+          )}
+        >
+          Ativar
+        </button>
+      </div>
     );
   }
 
+  const terminals = [...signalled, ...anchored];
+  const body =
+    localLanes.length === 0 && terminals.length === 0 ? (
+      <LeftPanelEmpty
+        title="No AI in the current tab"
+        hint="Open the tab whose terminal runs claude (via the shell wrapper) and its session shows up here."
+      />
+    ) : (
+      <div className="flex min-h-0 flex-1 flex-col divide-y divide-border/60">
+        {localLanes.map((lane) => (
+          <Lane
+            key={lane.toolCallId}
+            label={`Micah agent · ${LANE_VERB[lane.kind]} ${lane.path}`}
+            dimmed={lane.done}
+          >
+            <ReadOnlyStream content={lane.content} />
+          </Lane>
+        ))}
+        {terminals.map((meta) => (
+          <TerminalSession key={meta.leafId} meta={meta} view={view} />
+        ))}
+      </div>
+    );
+
   return (
-    <div className="flex h-full min-h-0 flex-col divide-y divide-border/60">
-      {localLanes.map((lane) => (
-        <Lane
-          key={lane.toolCallId}
-          label={`Micah agent · ${LANE_VERB[lane.kind]} ${lane.path}`}
-          dimmed={lane.done}
+    <div className="flex h-full min-h-0 flex-col">
+      <div className="flex h-7 shrink-0 items-center gap-1 border-b border-border/40 px-2">
+        <ViewButton
+          label="Stream"
+          active={view === "stream"}
+          onClick={() => setView("stream")}
+        />
+        <ViewButton
+          label="Files"
+          active={view === "files"}
+          onClick={() => setView("files")}
+        />
+        <span className="flex-1" />
+        <button
+          type="button"
+          onClick={() => setActivePersisted(false)}
+          className="cursor-pointer text-[11px] text-muted-foreground transition-colors hover:text-foreground"
         >
-          <ReadOnlyStream content={lane.content} />
-        </Lane>
-      ))}
-      {terminals.map((meta) => (
-        <TerminalSessionLanes key={meta.leafId} meta={meta} />
-      ))}
+          Desativar
+        </button>
+      </div>
+      {body}
     </div>
+  );
+}
+
+function ViewButton({
+  label,
+  active,
+  onClick,
+}: {
+  label: string;
+  active: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      aria-pressed={active}
+      onClick={onClick}
+      className={cn(
+        "h-5 cursor-pointer rounded px-2 text-[11px] font-medium transition-colors",
+        active
+          ? "bg-foreground/10 text-foreground"
+          : "text-muted-foreground hover:text-foreground",
+      )}
+    >
+      {label}
+    </button>
   );
 }
 
@@ -168,25 +270,50 @@ function Lane({
   );
 }
 
-function TerminalSessionLanes({ meta }: { meta: LaneMeta }) {
+/** One anchored pane: a single feed drives both views, so toggling does not
+ * restart the tail. */
+function TerminalSession({ meta, view }: { meta: LaneMeta; view: ViewerView }) {
   const feed = useClaudeSessionFeed(meta.resume);
-  const fileLanes = orderedLanes(feed.lanes);
-  if (feed.status === "feed" && fileLanes.length > 0) {
+  if (feed.status !== "feed") return <TerminalBufferLane meta={meta} />;
+
+  if (view === "stream") {
+    if (feed.stream.events.length === 0) {
+      return <TerminalBufferLane meta={meta} />;
+    }
     return (
-      <>
-        {fileLanes.map((lane) => (
-          <Lane
-            key={lane.toolCallId}
-            label={`${meta.agent} · ${LANE_VERB[lane.kind]} ${lane.path} (${meta.status})`}
-            dimmed={lane.done}
-          >
-            <ReadOnlyStream content={lane.content} />
-          </Lane>
-        ))}
-      </>
+      <div className="flex min-h-0 flex-1 basis-0 flex-col">
+        <div
+          className="flex h-6 shrink-0 items-center border-b border-border/40 px-2 text-[11px] text-muted-foreground"
+          title={`${meta.agent} session`}
+        >
+          <span className="truncate">
+            {meta.agent} · session ({meta.status})
+          </span>
+        </div>
+        <div className="min-h-0 flex-1">
+          <Suspense fallback={null}>
+            <SessionStreamView events={feed.stream.events} />
+          </Suspense>
+        </div>
+      </div>
     );
   }
-  return <TerminalBufferLane meta={meta} />;
+
+  const fileLanes = orderedLanes(feed.lanes);
+  if (fileLanes.length === 0) return <TerminalBufferLane meta={meta} />;
+  return (
+    <>
+      {fileLanes.map((lane) => (
+        <Lane
+          key={lane.toolCallId}
+          label={`${meta.agent} · ${LANE_VERB[lane.kind]} ${lane.path} (${meta.status})`}
+          dimmed={lane.done}
+        >
+          <ReadOnlyStream content={lane.content} />
+        </Lane>
+      ))}
+    </>
+  );
 }
 
 function TerminalBufferLane({ meta }: { meta: LaneMeta }) {
