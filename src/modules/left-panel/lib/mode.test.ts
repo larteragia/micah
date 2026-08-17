@@ -19,13 +19,14 @@ describe("LEFT_PANEL_MODES", () => {
     expect(Object.keys(LEFT_PANEL_MODE_LABELS).sort()).toEqual(
       [...LEFT_PANEL_MODES].sort(),
     );
-    expect(LEFT_PANEL_MODE_LABELS["ai-viewer"]).toBe("Ai Viewer");
+    expect(LEFT_PANEL_MODE_LABELS["ai-viewer"]).toBe("Micah's Mind");
   });
 });
 
 describe("isLeftPanelMode", () => {
   it("accepts the three modes and nothing else", () => {
-    for (const mode of LEFT_PANEL_MODES) expect(isLeftPanelMode(mode)).toBe(true);
+    for (const mode of LEFT_PANEL_MODES)
+      expect(isLeftPanelMode(mode)).toBe(true);
     for (const junk of ["", "Browser", "ai viewer", null, undefined, 3, {}]) {
       expect(isLeftPanelMode(junk)).toBe(false);
     }

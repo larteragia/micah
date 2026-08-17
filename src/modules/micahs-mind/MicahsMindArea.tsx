@@ -11,8 +11,6 @@ import {
   writeAiViewerActive,
 } from "@/modules/left-panel/lib/activation";
 import { lazy, Suspense, useMemo, useState } from "react";
-import { type CityFile, cleanRel, type Rect } from "./lib/citymap";
-import type { TouchedInfo } from "./lib/foldTrace";
 import {
   type MindSessionPick,
   pickMindSession,
@@ -103,39 +101,4 @@ export function MicahsMindArea({
       </Suspense>
     </div>
   );
-}
-
-export function mindStatusText(feed: {
-  status: string;
-  pick: MindSessionPick;
-}): string {
-  const why = WHY_TEXT[feed.pick.why];
-  return `${feed.status} (${why})`;
-}
-
-/** Shared hit-testing helper for the canvas and its tests. */
-export function fileAtPoint(
-  files: CityFile[],
-  ghosts: Map<string, Rect>,
-  touched: Map<string, TouchedInfo>,
-  wx: number,
-  wz: number,
-): string | null {
-  let best: string | null = null;
-  let bestArea = Number.POSITIVE_INFINITY;
-  const consider = (path: string, rect: Rect): void => {
-    if (wx < rect.x || wz < rect.z) return;
-    if (wx > rect.x + rect.w || wz > rect.z + rect.d) return;
-    const area = rect.w * rect.d;
-    if (area < bestArea) {
-      bestArea = area;
-      best = path;
-    }
-  };
-  for (const f of files) consider(f.path, f.rect);
-  for (const [path, rect] of ghosts) {
-    const rel = cleanRel(path);
-    if (!touched.has(rel)) consider(rel, rect);
-  }
-  return best;
 }

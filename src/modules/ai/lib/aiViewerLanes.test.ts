@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
-  capContent,
   CONTENT_CAP,
+  capContent,
   LANE_CAP,
   type LaneMap,
   markLaneDone,
@@ -79,7 +79,9 @@ describe("upsertLane", () => {
       },
       1,
     );
-    expect(lanes.e1.content).toBe(renderEdits([{ old_string: "foo", new_string: "bar" }]));
+    expect(lanes.e1.content).toBe(
+      renderEdits([{ old_string: "foo", new_string: "bar" }]),
+    );
     expect(lanes.e1.content).toContain("--- old\nfoo");
     expect(lanes.e1.content).toContain("+++ new\nbar");
   });

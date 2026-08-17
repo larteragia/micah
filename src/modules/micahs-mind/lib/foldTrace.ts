@@ -331,7 +331,7 @@ export function foldMindLines(
             // Re-delivered result whose call we no longer hold: the event is
             // already settled with its full input; reclassifying against an
             // empty input would downgrade it (auditor finding 2).
-            if (existing && existing.settled && !call) continue;
+            if (existing?.settled && !call) continue;
             const result = contentToString(block.content);
             const isError = block.is_error === true;
             const final = buildEvent(

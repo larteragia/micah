@@ -1,7 +1,7 @@
 import { useChat, type UIMessage } from "@ai-sdk/react";
 import type { ToolUIPart, UIMessagePart } from "ai";
 import { useEffect, useMemo, useRef } from "react";
-import { useAiViewerStore } from "@/modules/left-panel/lib/useAiViewerStore";
+import { useAiViewerStore } from "@/modules/ai/lib/useAiViewerStore";
 import { native } from "../lib/native";
 import { checkReadable } from "../lib/security";
 import { resolvePath } from "../tools/tools";

@@ -10,7 +10,7 @@ export type LeftPanelMode = (typeof LEFT_PANEL_MODES)[number];
 export const LEFT_PANEL_MODE_LABELS: Readonly<Record<LeftPanelMode, string>> = {
   browser: "Browser",
   editor: "Editor",
-  "ai-viewer": "Ai Viewer",
+  "ai-viewer": "Micah's Mind",
 };
 
 const MODE_KEY = "micah.leftPanel.mode";
