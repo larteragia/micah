@@ -2,7 +2,21 @@
 
 - **Data**: 2026-08-14
 - **Autor do card**: Rodrigo Campos
-- **Coluna**: Fazendo
+- **Coluna**: A fazer
+
+> **2026-08-17, volta para a fila (MAXIMO 01 CARD POR VEZ)**: o modo Ai Viewer
+> deste card (E5, faixas CM6 com tail do JSONL) esta SUPERADO por decisao do
+> Rodrigo: no lugar dele entra o Micah's Mind (card
+> `micahs-mind-2026-08-17.md`), que demole o viewer velho e poe a cidade
+> luminosa navegavel com streaming ao vivo, juiz GLM e chunk no oracle-rag. Os
+> ativos vivos deste card (claude_session_tail, claudeSessionOps,
+> useClaudeSessionFeed, moldura de tres modos, pane nas abas) sao HERDADOS e
+> mantidos pelo card novo. O que ainda falta FECHAR daqui: (1) prova de E2b em
+> binario de release (Ctrl+Tab, Cmd+1..9, guarda de fechamento, restore,
+> Cmd+F, criterios 6 e 7); (2) E6/E7 (verificacao completa + memorium). Essas
+> provas cavalgam a validacao do card micahs-mind, que roda os mesmos checks e
+> a mesma prova no ar em release; ao fechar aquele card, este volta a ser
+> conferido item por item antes de Feito.
 
 > **2026-08-15 09:20**: card retomado pela ronda (browser-pdi fechou o modo
 > Browser e o E4 daqui esta superado pelos artefatos do PDI; explorer-raiz-livre
