@@ -321,10 +321,15 @@ export function verifyCommand(command: string): boolean {
         }
         tokens.push(arg);
       }
+      // Lint/format runs that MUTATE files (biome --write, eslint --fix,
+      // prettier -w) are edits in disguise, never verification (auditor
+      // finding 4: divergence from the Go port, registered in the card).
+      const mutates = /(^|\s)(--write|--fix|--unsafe|-w)(\s|$)/.test(command);
       if (
-        tokens.includes("test") ||
-        tokens.includes("build") ||
-        tokens.includes("check")
+        !mutates &&
+        (tokens.includes("test") ||
+          tokens.includes("build") ||
+          tokens.includes("check"))
       ) {
         return true;
       }
@@ -538,7 +543,13 @@ export function actionFor(
 }
 
 export type TargetsCtx = PathCtx & {
-  /** Weak targets survive only when this says the repo file exists. */
+  /**
+   * Existence oracle for weak targets. mindwalk stats the filesystem here
+   * (adapter.go repoPathExists); this port stays pure, so the caller passes
+   * what it knows: without a predicate weak targets are kept and flagged
+   * (Target.weak, TouchedInfo.weak) for the consumer to filter; with one,
+   * weak targets pointing at files the caller cannot see are dropped.
+   */
   exists?: (rel: string) => boolean;
 };
 

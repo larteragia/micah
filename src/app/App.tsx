@@ -63,12 +63,12 @@ import {
   useBrowserPanel,
 } from "@/modules/browser";
 import {
-  AiViewerArea,
   LeftEditorArea,
   LeftPanelEmpty,
   LeftPanelSwitcher,
   useLeftPanel,
 } from "@/modules/left-panel";
+import { MicahsMindArea } from "@/modules/micahs-mind";
 import {
   SIDEBAR_MAX_WIDTH,
   SIDEBAR_MIN_WIDTH,
@@ -1734,13 +1734,15 @@ export default function App() {
                       />
                     </div>
                     {/* Read-only, so unmounting when hidden is free (no user
-                      state to lose) and stops the terminal buffer polling. */}
+                      state to lose) and stops the transcript polling. The
+                      focused pane of the active tab picks the session. */}
                     {leftPanel.mode === "ai-viewer" ? (
                       <div className="absolute inset-0 bg-card">
-                        <AiViewerArea
+                        <MicahsMindArea
                           resolveLeafResume={resolveLeafResume}
                           anchoredLeaves={anchoredLeaves}
                           visibleLeafIds={visibleLeafIds}
+                          activeLeafId={activeLeafId}
                         />
                       </div>
                     ) : null}

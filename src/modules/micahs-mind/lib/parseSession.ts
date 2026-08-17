@@ -133,7 +133,9 @@ function metaOf(root: Record<string, unknown>): LineMeta {
 export function parseSessionLine(line: string): SessionLine {
   let rec: unknown;
   try {
-    rec = JSON.parse(line);
+    // A UTF-8 BOM on the first line of a transcript would fail JSON.parse;
+    // strip it defensively (auditor finding 10).
+    rec = JSON.parse(line.charCodeAt(0) === 0xfeff ? line.slice(1) : line);
   } catch {
     return { kind: "ignored", reason: "unparseable", ...emptyMeta() };
   }

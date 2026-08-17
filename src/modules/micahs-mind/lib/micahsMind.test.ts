@@ -182,6 +182,13 @@ describe("actionFor and command grading", () => {
     );
     expect(actionFor("Bash", { command: "cat src/App.tsx" }, "")).toBe("read");
     expect(actionFor("Bash", { command: "npm install" }, "")).toBe("exec");
+    // Lint runs that write files are edits, never verification.
+    expect(
+      actionFor("Bash", { command: "pnpm exec biome check --write src" }, ""),
+    ).toBe("exec");
+    expect(actionFor("Bash", { command: "cargo test --locked" }, "")).toBe(
+      "verify",
+    );
     // find with -exec mutates: stays out of search
     expect(searchCommand("find . -name x -exec rm {} ;")).toBe(false);
     expect(commandReadPaths("cat src/a.ts src/b.ts")).toEqual([
@@ -398,6 +405,16 @@ describe("foldMindLines", () => {
     const lines = [
       line({
         ...base,
+        type: "user",
+        message: { role: "user", content: "do the thing" },
+      }),
+      line({
+        ...base,
+        type: "system",
+        subtype: "compact-boundary",
+      }),
+      line({
+        ...base,
         type: "assistant",
         message: {
           role: "assistant",
@@ -408,6 +425,7 @@ describe("foldMindLines", () => {
               name: "Read",
               input: { file_path: "src/a.ts" },
             },
+            { type: "tool_use", id: "t2", name: "Agent", input: {} },
           ],
         },
       }),
@@ -416,14 +434,64 @@ describe("foldMindLines", () => {
         type: "user",
         message: {
           role: "user",
-          content: [{ type: "tool_result", tool_use_id: "t1", content: "x" }],
+          content: [
+            { type: "tool_result", tool_use_id: "t1", content: "x" },
+            { type: "tool_result", tool_use_id: "t2", content: "done" },
+          ],
         },
       }),
     ];
     const fold = foldLines(lines);
+    const before = {
+      events: fold.events.length,
+      userTurns: fold.stats.userTurns,
+      compactions: fold.stats.compactions,
+      subagents: fold.stats.subagents,
+      actions: { ...fold.stats.actions },
+    };
     foldLines(lines, fold);
+    expect(fold.events.length).toBe(before.events);
+    expect(fold.stats.userTurns).toBe(before.userTurns);
+    expect(fold.stats.compactions).toBe(before.compactions);
+    expect(fold.stats.subagents).toBe(before.subagents);
+    expect(fold.stats.actions).toEqual(before.actions);
+  });
+
+  it("does not downgrade a settled event when its result is re-delivered alone", () => {
+    const fold = emptyMindFold("s3");
+    const use = line({
+      ...base,
+      sessionId: "s3",
+      type: "assistant",
+      message: {
+        role: "assistant",
+        content: [
+          {
+            type: "tool_use",
+            id: "t1",
+            name: "Bash",
+            input: { command: "pnpm -C . test" },
+          },
+        ],
+      },
+    });
+    const result = line({
+      ...base,
+      sessionId: "s3",
+      type: "user",
+      message: {
+        role: "user",
+        content: [{ type: "tool_result", tool_use_id: "t1", content: "ok" }],
+      },
+    });
+    foldMindLines(fold, [use, result], CTX);
+    expect(fold.events[0]?.action).toBe("verify");
+    // Result re-delivered after the pending call was consumed: the settled
+    // classification (full input) must survive (auditor finding 2).
+    foldMindLines(fold, [result], CTX);
+    expect(fold.events[0]?.action).toBe("verify");
+    expect(fold.events[0]?.summary).toContain("pnpm -C . test");
     expect(fold.events.length).toBe(1);
-    expect(fold.stats.actions.read).toBe(1);
   });
 
   it("ignores tool_results without a known call", () => {

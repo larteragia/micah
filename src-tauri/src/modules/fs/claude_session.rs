@@ -112,6 +112,26 @@ fn tail_file(path: &Path, offset: Option<u64>) -> Result<SessionTail, String> {
     })
 }
 
+/// Transcript roots to probe, in order. The default CLI writes to
+/// ~/.claude/projects; wrapper configs (the micah alias sets
+/// CLAUDE_CONFIG_DIR to ~/.claude-micah) write their own tree, and the mind
+/// must follow sessions launched either way on the same machine.
+fn transcript_roots(home: &Path) -> Vec<PathBuf> {
+    vec![
+        home.join(".claude").join("projects"),
+        home.join(".claude-micah").join("projects"),
+    ]
+}
+
+fn find_session_in_roots(roots: &[PathBuf], session: &str) -> Option<PathBuf> {
+    for root in roots {
+        if let Some(path) = find_session_file(root, session) {
+            return Some(path);
+        }
+    }
+    None
+}
+
 #[tauri::command]
 pub async fn claude_session_tail(
     session_id: String,
@@ -120,11 +140,11 @@ pub async fn claude_session_tail(
     if !is_uuid(&session_id) {
         return Err("invalid session id".into());
     }
-    let root = match dirs::home_dir() {
-        Some(home) => home.join(".claude").join("projects"),
+    let roots = match dirs::home_dir() {
+        Some(home) => transcript_roots(&home),
         None => return Ok(empty_tail(false)),
     };
-    match find_session_file(&root, &session_id.to_lowercase()) {
+    match find_session_in_roots(&roots, &session_id.to_lowercase()) {
         Some(path) => tail_file(&path, offset),
         None => Ok(empty_tail(false)),
     }
@@ -152,6 +172,18 @@ mod tests {
         let path = write_session(tmp.path(), "C--proj", SESSION, b"{}\n");
         assert_eq!(find_session_file(tmp.path(), SESSION), Some(path));
         assert_eq!(find_session_file(tmp.path(), "0000-missing"), None);
+    }
+
+    #[test]
+    fn falls_through_to_the_second_root() {
+        let primary = tempfile::tempdir().unwrap();
+        let secondary = tempfile::tempdir().unwrap();
+        let path = write_session(secondary.path(), "C--proj", SESSION, b"{}\n");
+        let roots = vec![primary.path().to_path_buf(), secondary.path().to_path_buf()];
+        assert_eq!(find_session_in_roots(&roots, SESSION), Some(path));
+        // the primary root still wins when both hold the id
+        let first = write_session(primary.path(), "C--proj", SESSION, b"{}\n");
+        assert_eq!(find_session_in_roots(&roots, SESSION), Some(first));
     }
 
     #[test]

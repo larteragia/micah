@@ -30,6 +30,7 @@ import {
   emptyStats,
   type MindTrace,
   type TraceEvent,
+  type TraceMark,
   type TraceSession,
 } from "./trace";
 
@@ -37,6 +38,9 @@ export type FoldedEvent = TraceEvent & {
   toolUseId: string;
   /** False while the tool call is still running (no result line yet). */
   settled: boolean;
+  /** Tool input kept on the event so a late or post-copy result can
+   * reclassify with full context even when the pending map lost the call. */
+  input: ToolInput;
 };
 
 export type TouchedInfo = {
@@ -44,6 +48,9 @@ export type TouchedInfo = {
   firstSeq: number;
   lastSeq: number;
   count: number;
+  /** True when every observation of this path was weak (inferred from
+   * command/output text): the scene treats weak-only paths as unproven. */
+  weak: boolean;
 };
 
 export type MindFold = Omit<MindTrace, "events"> & {
@@ -62,6 +69,8 @@ type ToolUseCall = {
 type FoldInternals = {
   byId: Map<string, FoldedEvent>;
   pending: Map<string, ToolUseCall>;
+  /** Mark-bearing lines already folded; re-delivery must not double marks. */
+  seenLines: Set<string>;
 };
 
 const internals = new WeakMap<MindFold, FoldInternals>();
@@ -80,17 +89,54 @@ export function emptyMindFold(sessionId = ""): MindFold {
     stats: emptyStats(),
     touched: new Map(),
   };
-  internals.set(fold, { byId: new Map(), pending: new Map() });
+  internals.set(fold, {
+    byId: new Map(),
+    pending: new Map(),
+    seenLines: new Set(),
+  });
   return fold;
 }
 
+/**
+ * Internals for this fold object. Snapshots made the React way ({...fold},
+ * structuredClone) do not carry the WeakMap: the index is re-seeded from
+ * fold.events (every event knows its toolUseId), so a copy folding the same
+ * line again dedupes instead of duplicating (auditor finding 3).
+ */
 function internsOf(fold: MindFold): FoldInternals {
   let i = internals.get(fold);
   if (!i) {
-    i = { byId: new Map(), pending: new Map() };
+    i = {
+      byId: new Map(fold.events.map((e) => [e.toolUseId, e])),
+      pending: new Map(),
+      seenLines: new Set(),
+    };
     internals.set(fold, i);
   }
   return i;
+}
+
+/**
+ * Reset a fold in place for a transcript file that shrank or was replaced:
+ * events, marks, stats, session meta AND the id index/pending/line-dedupe
+ * sets all go back to empty, or the refold would silence every re-delivered
+ * tool_use as a duplicate (auditor correction 15).
+ */
+export function resetMindFold(
+  fold: MindFold,
+  sessionId = fold.session.id,
+): void {
+  fold.session = { id: sessionId, harness: "claude-code", eventCount: 0 };
+  fold.events.length = 0;
+  fold.marks.length = 0;
+  fold.touched.clear();
+  fold.stats = emptyStats();
+  const i = internals.get(fold);
+  if (i) {
+    i.byId.clear();
+    i.pending.clear();
+    i.seenLines.clear();
+  }
 }
 
 function toolInputOf(block: ContentBlock): ToolInput {
@@ -136,10 +182,12 @@ function noteTouched(fold: MindFold, event: FoldedEvent): void {
         firstSeq: event.seq,
         lastSeq: event.seq,
         count: 1,
+        weak: t.weak,
       });
       continue;
     }
     if (TOUCH_RANK[t.touch] > TOUCH_RANK[prev.touch]) prev.touch = t.touch;
+    if (!t.weak) prev.weak = false;
     prev.lastSeq = event.seq;
     prev.count++;
   }
@@ -172,10 +220,16 @@ function applyMeta(
 /**
  * Fold transcript lines into the live trace. Mutates and returns the same
  * fold object; callers that need React reactivity wrap it with a version
- * counter. Re-delivered lines (same tool_use ids, same user messages)
- * re-apply as no-ops on the event side; user-message marks from redelivered
- * lines are removed by the reset path, never duplicated here because the
- * caller only re-delivers after a reset.
+ * counter. Re-delivered lines are no-ops on BOTH sides: events dedupe by
+ * tool_use id and mark-producing lines dedupe by line hash (auditor finding
+ * 1: userTurns/compactions/subagents are stats, doubling them on a refold
+ * poisons the metrics the judge reads). resetMindFold clears the hashes so a
+ * genuine refold after file replacement re-marks everything.
+ *
+ * Divergence from mindwalk (registered in the card): seq is assigned at
+ * tool_use time so the scene lights up while the call runs (criterion 3);
+ * mindwalk appends at settle time and reindexes. eventsBeforeFirstEdit can
+ * differ by the unsettled prefix.
  */
 export function foldMindLines(
   fold: MindFold,
@@ -192,6 +246,22 @@ export function foldMindLines(
   const i = internsOf(fold);
   let changed = false;
 
+  const lineHash = (line: string): string => {
+    let h = 5381;
+    for (let k = 0; k < line.length; k++) h = (h * 33) ^ line.charCodeAt(k);
+    return String(h);
+  };
+  const markOnce = (
+    line: string,
+    mark: { seq: number; type: TraceMark["type"]; note?: string },
+  ): boolean => {
+    const key = lineHash(line);
+    if (i.seenLines.has(key)) return false;
+    i.seenLines.add(key);
+    fold.marks.push(mark);
+    return true;
+  };
+
   for (const line of lines) {
     if (line.trim() === "") continue;
     const parsed = parseSessionLine(line);
@@ -202,16 +272,20 @@ export function foldMindLines(
         changed = true;
         break;
       case "compaction":
-        fold.marks.push({ seq: fold.events.length, type: "compaction" });
-        changed = true;
+        if (markOnce(line, { seq: fold.events.length, type: "compaction" })) {
+          changed = true;
+        }
         break;
       case "user-text":
-        fold.marks.push({
-          seq: fold.events.length,
-          type: "user-message",
-          note: parsed.note,
-        });
-        changed = true;
+        if (
+          markOnce(line, {
+            seq: fold.events.length,
+            type: "user-message",
+            note: parsed.note,
+          })
+        ) {
+          changed = true;
+        }
         break;
       case "message": {
         if (parsed.model && !fold.session.model)
@@ -224,19 +298,20 @@ export function foldMindLines(
               input: toolInputOf(block),
               ts: parsed.timestamp,
             };
-            if (call.name === "Task" || call.name === "Agent") {
-              fold.marks.push({
-                seq: fold.events.length,
-                type: "subagent",
-                note: call.name,
-              });
-            }
             let event = i.byId.get(call.id);
             if (!event) {
+              if (call.name === "Task" || call.name === "Agent") {
+                markOnce(line, {
+                  seq: fold.events.length,
+                  type: "subagent",
+                  note: call.name,
+                });
+              }
               event = {
                 ...buildEvent(fold.events.length, call, "", false, false, ctx),
                 toolUseId: call.id,
                 settled: false,
+                input: call.input,
               };
               fold.events.push(event);
               i.byId.set(call.id, event);
@@ -253,6 +328,10 @@ export function foldMindLines(
             const existing = i.byId.get(id);
             const call = i.pending.get(id);
             if (!existing && !call) continue;
+            // Re-delivered result whose call we no longer hold: the event is
+            // already settled with its full input; reclassifying against an
+            // empty input would downgrade it (auditor finding 2).
+            if (existing && existing.settled && !call) continue;
             const result = contentToString(block.content);
             const isError = block.is_error === true;
             const final = buildEvent(
@@ -260,7 +339,7 @@ export function foldMindLines(
               call ?? {
                 id,
                 name: existing?.tool ?? "",
-                input: {},
+                input: existing?.input ?? {},
                 ts: existing?.ts,
               },
               result,
@@ -276,6 +355,7 @@ export function foldMindLines(
                 ...final,
                 toolUseId: id,
                 settled: true,
+                input: call?.input ?? {},
               };
               fold.events.push(event);
               i.byId.set(id, event);

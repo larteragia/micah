@@ -9,12 +9,6 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { emptyMindFold, foldMindLines } from "./foldTrace";
-import type { ContentBlock } from "./parseSession";
-import {
-  hasUserMessage,
-  injectedUserMessage,
-  userMessageText,
-} from "./parseSession";
 
 const SESSION = join(
   homedir(),
@@ -27,10 +21,45 @@ const SESSION = join(
 const skip = !existsSync(SESSION);
 const d = describe.skipIf(skip);
 
-function blocksOf(content: unknown): ContentBlock[] {
+/**
+ * Raw block view for the hand count: deliberately NOT the module's own
+ * helpers, so the count stays independent of the code under test (auditor
+ * finding 11: a circular hand count cannot catch parser bugs).
+ */
+type RawBlock = {
+  type?: unknown;
+  id?: unknown;
+  name?: unknown;
+  text?: unknown;
+};
+
+function blocksOf(content: unknown): RawBlock[] {
   if (typeof content === "string") return [{ type: "text", text: content }];
   if (!Array.isArray(content)) return [];
-  return content as ContentBlock[];
+  return content as RawBlock[];
+}
+
+function rawUserText(blocks: RawBlock[]): string {
+  return blocks
+    .filter(
+      (b) =>
+        b.type === "text" && typeof b.text === "string" && b.text.trim() !== "",
+    )
+    .map((b) => (b.text as string).trim())
+    .join("\n");
+}
+
+function rawIsInjected(text: string): boolean {
+  const t = text.trim();
+  if (t.startsWith("# AGENTS.md instructions")) return true;
+  return t.startsWith("<") && t.endsWith(">");
+}
+
+function rawHasUserMessage(blocks: RawBlock[]): boolean {
+  for (const b of blocks) {
+    if (b.type === "tool_result") return false;
+  }
+  return true;
 }
 
 d("fold against the live transcript", () => {
@@ -66,9 +95,9 @@ d("fold against the live transcript", () => {
           if (b.name === "Task" || b.name === "Agent") subagents++;
         }
       }
-    } else if (rec.type === "user" && hasUserMessage(blocks)) {
-      const text = userMessageText(blocks);
-      if (text !== "" && !injectedUserMessage(text)) userTurns++;
+    } else if (rec.type === "user" && rawHasUserMessage(blocks)) {
+      const text = rawUserText(blocks);
+      if (text !== "" && !rawIsInjected(text)) userTurns++;
     }
   }
 
@@ -109,8 +138,19 @@ d("fold against the live transcript", () => {
   });
 
   it("is idempotent when the whole file is folded again", () => {
+    const before = {
+      events: fold.events.length,
+      marks: fold.marks.length,
+      userTurns: fold.stats.userTurns,
+      subagents: fold.stats.subagents,
+      compactions: fold.stats.compactions,
+    };
     foldMindLines(fold, lines, { cwd: "C:\\", home: "C:/Users/Zigfriad" });
-    expect(fold.events.length).toBe(toolUses);
+    expect(fold.events.length).toBe(before.events);
+    expect(fold.marks.length).toBe(before.marks);
+    expect(fold.stats.userTurns).toBe(before.userTurns);
+    expect(fold.stats.subagents).toBe(before.subagents);
+    expect(fold.stats.compactions).toBe(before.compactions);
     expect(fold.stats.actions.read + fold.stats.actions.edit).toBeGreaterThan(
       0,
     );
