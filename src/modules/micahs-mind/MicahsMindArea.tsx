@@ -162,7 +162,19 @@ export function MicahsMindArea({
           limit: 5,
         });
         if (!alive) return;
-        setRecent(res);
+        // A repo with no sessions of its own keeps its honest dark city and
+        // no auto-connect, but the picker still offers the freshest
+        // sessions anywhere: one click connects instead of an empty panel.
+        if (res.length === 0 && scannable) {
+          const globalRes = await invoke<RecentSession[]>(
+            "claude_sessions_recent",
+            { cwd: null, limit: 5 },
+          );
+          if (!alive) return;
+          setRecent(globalRes);
+        } else {
+          setRecent(res);
+        }
         setAuto({
           session: res[0]?.session_id ?? null,
           forCwd: focusedCwd,
