@@ -2,7 +2,7 @@
 
 - **Data**: 2026-08-18
 - **Autor do card**: Rodrigo Campos (direção: "resolvemos primeiro aparecer, depois tempo real")
-- **Coluna**: Fazendo
+- **Coluna**: Feito
 
 ## Descricao
 
@@ -170,10 +170,84 @@ confirmado (achado 7); custo do drive-root confirmado com numeros (achado
 registrada, nao deste card); mtime futuro DERRUBADO (clamp em "agora");
 activeLeafId de aba editora DERRUBADO (retorna null, empty state correto).
 
+### ACHADO GRAVE pós-validação (2026-08-18, card próprio recomendado)
+
+O shell-integration do PTY está INOPERANTE para toda pane neste build: o
+profile.ps1 nunca roda (`Test-Path Variable:__MICAH_HOOKS_LOADED` = False em
+pane ressuscitada E em aba nova — 64-freshtab-hooks.png; ontem 31-diag
+Function:claude False), embora o arquivo esteja correto no disco e funcione
+standalone (True/True por execução direta) e o log de spawn não registre o
+warn de "shell integration disabled". Consequências: OSC 7 morto (cd não
+atualiza cwd de pane), OSC 133 morto, wrapper claude com ancoragem mortos —
+a jornada claude-numa-aba do card 08-15 depende disso. A regressão antecede
+este card (achado do 17/08, então tratado como só-ressuscitada; agora se
+provou geral). A auto-conexão deste card cobre o boot via cwd serializado,
+mas o mapa ao vivo por cd fica cego até a raiz ser caçada.
+
 ## Validacao independente
 
-(pendente)
+Veredito: **APROVADO** (validador GLM independente do executor, 2026-08-18,
+provas frescas em docs/proof/micahs-mind-sempre-visivel/, nascidas do build
+novo — nenhuma captura do card 17/08 reaproveitada). Item por item:
+
+1. **pass.** Painel com cwd em repo sem nenhuma sessão (repo de prova criado
+   para isto): cidade escura treemap com selo "cidade sem sessão" e SEM id
+   de sessão (57-c1-fresh-tab.png); o modo city-only não invoca
+   claude_session_tail (early-return no efeito, useMindFeed.ts) e o shape
+   REL do scan está pinado por teste (useMindFeed.test.ts).
+2. **pass.** Boot com pane em repo: auto-conexão na sessão mais fresca do
+   local com selo "replay · há 2 h" + id + cidade colorida com 1162 eventos
+   (61-final-boot.png) e a saída do comando no log da instância viva:
+   `[17:37:01][INFO] claude_sessions_recent cwd=Some("C:/Users/Zigfriad/
+   projetos/micah") -> 6 sessions`; variante cwd fora de repo (global, a
+   sessão desconectada que o comandante queria ver) provada em
+   50-autoconnect.png/52-c2-global.png.
+3. **pass.** Seletor lista 5 sessões (id + idade); clique na terceira trocou
+   o id do cabeçalho de 6b1f761x para 9e64b9b5 com selo "escolhida · há 3 h"
+   (62-c3-list-open.png → 63-c3-switched.png); prioridade âncora > manual >
+   auto coberta por testes (composePick).
+4. **pass.** Sessão conectada cujo transcript foi apagado (fake criada e
+   deletada por mim, nenhum transcript real tocado): badge âmbar "transcript
+   ausente" com a cidade PERMANECENDO desenhada (65-c4-connected.png →
+   66-c4-missing.png); contrato pinado em teste (absentStatus).
+5. **pass.** vitest 859/859 (846 prévios + 13 novos), check-types verde,
+   biome lint verde, clippy --all-targets --locked -D warnings verde, cargo
+   test 267/267 válidos (1 fail ambiental de symlink pré-documentado no
+   memorium desde 17/08: erro 1314 de privilégio, fora do critério).
+6. **pass.** Binário reconstruído e lido do ar: `[2026-08-18][17:37:01]
+   [micah_lib][INFO] micah build 6b1f761-dirty` no stdout da instância viva
+   com redirect (micah-run7.log); 6b1f761 = HEAD do card; -dirty por três
+   arquivos de estilo tocados fora do card (preservados, registro abaixo).
+7. **pass.** Todo o comportamento conferido na janela real via
+   window-shot/window-click (prova_de_ui do memorium), com o comandante
+   usando o mesmo build ao vivo durante a manhã (auto-conexão visível no
+   boot das instâncias dele).
+
+Registro de escopo: o acompanhamento de cwd por `cd` DENTRO de uma pane
+existente depende do shell-integration do PTY, que está quebrado para TODAS
+as panes neste build (aba ressuscitada E aba nova: `__MICAH_HOOKS_LOADED`
+False, 64-freshtab-hooks.png; o profile.ps1 funciona standalone — provado
+por execução direta True/True). A auto-conexão cobre o caso de uso real via
+cwd serializado da pane no boot (provado no critério 2), mas `cd` ao vivo
+não atualiza o mapa até esse bug raiz ser corrigido — aberto como achado
+grave abaixo, card próprio recomendado.
 
 ## Rastro
 
-(pendente)
+- Commits (um por etapa + correções de auditoria): 025053c (E0 scan REL),
+  b269f8e (E1 comando), d2f81f7 (E1b ancestor probing), 9fdb7d8 (E2-E4
+  frontend), 47bdde8 (correções da auditoria de implementação), 77d1f41
+  (repo sem sessões fica na cidade escura), e4df969 (telemetria do comando),
+  6b1f761 (contrato absentStatus).
+- Arquivos: src-tauri/src/modules/fs/claude_session.rs (+comando
+  claude_sessions_recent, munge, verificação de cwd na 1ª linha, sondagem
+  por ancestrais sem nível de drive), src/modules/micahs-mind/lib/
+  useMindFeed.ts (mapScanFiles, city-only, missing, composePick,
+  absentStatus), MicahsMindArea.tsx (auto-conexão 1x por cwd, gate de
+  cheiro de repo, seletor), MindCanvas.tsx (selos PT, badge de sessão,
+  replay sem colisão), src/app/App.tsx (resolveLeafCwd).
+- Provas: docs/proof/micahs-mind-sempre-visivel/ (50-66 + crops).
+- Deploy: micah.exe 6b1f761-dirty em execução no zig-laptop desde
+  2026-08-18 14:37 -0300; comandante usou o build ao longo da manhã.
+- Fakes do critério 4 criados em dir próprio com uuids inventados e
+  removidos no fim (rm-fake-sessions.sh); nenhum transcript real tocado.
