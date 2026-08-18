@@ -170,6 +170,17 @@ confirmado (achado 7); custo do drive-root confirmado com numeros (achado
 registrada, nao deste card); mtime futuro DERRUBADO (clamp em "agora");
 activeLeafId de aba editora DERRUBADO (retorna null, empty state correto).
 
+### Adendo pós-fechamento (2026-08-18, reclamacao ao vivo do comandante)
+
+Comandante reabriu o app e viu o painel vazio ("nao esta aparecendo nada",
+70-user-report.png): duas abas com ancoras antigas -> pickMindSession
+devolvia "ambiguous" -> composePick antigo recusava a auto-conexao por
+principio. Corrigido no commit d3e3140: com seletor + selo de replay na
+tela, seguir a mais fresca rotulada deixa de ser adivinhacao; ancora viva
+continua mandando (teste atualizado). Build d3e3140-dirty lido do ar no
+boot seguinte: `[19:00:47][INFO] micah build d3e3140-dirty` +
+auto-conexao disparando nos dois panes (cwd=micah -> 6; global -> 100).
+
 ### ACHADO GRAVE pós-validação (2026-08-18, card próprio recomendado)
 
 O shell-integration do PTY está INOPERANTE para toda pane neste build: o
