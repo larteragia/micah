@@ -272,12 +272,16 @@ fn list_recent_in_dir(
     }
 }
 
-/// Repo-scoped candidates: munged dir of the root exactly plus dirs
-/// extending it (launches from subdirs), each verified by the transcript's
-/// own first-line cwd, so sibling dirs like "micah-old" do not leak in.
-fn collect_repo_sessions(roots: &[PathBuf], cwd: &str) -> Vec<RecentSession> {
-    let munged = munge_project_dir(cwd);
-    let root_segs = path_segments(cwd);
+/// Repo-scoped candidates for ONE candidate root: munged dir of the root
+/// exactly plus dirs extending it (launches from subdirs), each verified by
+/// the transcript's own first-line cwd, so sibling dirs like "micah-old" do
+/// not leak in.
+fn collect_for_candidate(
+    roots: &[PathBuf],
+    candidate: &str,
+) -> Vec<RecentSession> {
+    let munged = munge_project_dir(candidate);
+    let root_segs = path_segments(candidate);
     let extending: String = format!("{munged}-");
     let mut out: Vec<RecentSession> = Vec::new();
     for root in roots {
@@ -297,13 +301,36 @@ fn collect_repo_sessions(roots: &[PathBuf], cwd: &str) -> Vec<RecentSession> {
     }
     out.retain(|s| {
         // Verified per transcript: the session's own cwd must sit in the
-        // repo. A candidate we cannot even find again keeps its dir-based
-        // verdict (verification tightens, never invents).
+        // candidate. A candidate we cannot even find again keeps its
+        // dir-based verdict (verification tightens, never invents).
         find_session_in_roots(roots, &s.session_id)
             .map(|p| transcript_cwd_inside(&p, &root_segs))
             .unwrap_or(true)
     });
     out
+}
+
+/// Sessions for a pane cwd WITHOUT git: probe the cwd itself, then each
+/// ancestor, and keep the DEEPEST level that has verified sessions. A pane
+/// inside a repo finds that repo's sessions even when launched from a
+/// subdir; a pane in the home dir finds home-launched sessions (the live
+/// disconnected session the commander wants to see) instead of jumping to
+/// an unrelated project. Deepest-first keeps the match honest: verification
+/// is always the transcript's own cwd.
+fn collect_repo_sessions(roots: &[PathBuf], cwd: &str) -> Vec<RecentSession> {
+    let slashed = cwd.replace('\\', "/");
+    let raw_parts: Vec<&str> = slashed
+        .split('/')
+        .filter(|s| !s.is_empty() && *s != ".")
+        .collect();
+    for depth in (1..=raw_parts.len()).rev() {
+        let candidate = raw_parts[..depth].join("/");
+        let found = collect_for_candidate(roots, &candidate);
+        if !found.is_empty() {
+            return found;
+        }
+    }
+    Vec::new()
 }
 
 /// Freshest sessions across every project dir (auto-connect fallback when
@@ -576,6 +603,53 @@ mod tests {
         write_session(tmp.path(), "C--two", "not-a-uuid", b"{}\n");
         let got = collect_global_sessions(&[tmp.path().to_path_buf()]);
         assert_eq!(got.len(), 2);
+    }
+
+    #[test]
+    fn ancestor_probing_finds_repo_sessions_from_a_subdir_cwd() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().to_path_buf();
+        // Session launched at the repo root.
+        write_session(
+            &root,
+            "C--repo-micah",
+            SESSION,
+            b"{\"cwd\":\"C:\\\\repo\\\\micah\"}\n",
+        );
+        // Pane sitting in a subdirectory: no dir matches the subdir's own
+        // munge, so the probe must walk up to the repo root level.
+        let got = collect_repo_sessions(std::slice::from_ref(&root), r"C:\repo\micah\src\lib");
+        let ids: Vec<&str> = got.iter().map(|s| s.session_id.as_str()).collect();
+        assert!(ids.contains(&SESSION));
+    }
+
+    #[test]
+    fn ancestor_probing_prefers_the_deepest_match_over_home_noise() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().to_path_buf();
+        let repo = "11111111-2222-3333-4444-555555555555";
+        write_session(
+            &root,
+            "C--repo-micah",
+            repo,
+            b"{\"cwd\":\"C:\\\\repo\\\\micah\"}\n",
+        );
+        // A home-launched session also exists (shallower ancestor).
+        write_session(
+            &root,
+            "C--Users-zig",
+            SESSION,
+            b"{\"cwd\":\"C:\\\\Users\\\\zig\"}\n",
+        );
+        // Pane in the repo: deepest level wins, home session stays out.
+        let got = collect_repo_sessions(std::slice::from_ref(&root), r"C:\repo\micah");
+        let ids: Vec<&str> = got.iter().map(|s| s.session_id.as_str()).collect();
+        assert_eq!(ids, [repo]);
+        // Pane at home: home level matches there.
+        let got = collect_repo_sessions(std::slice::from_ref(&root), r"C:\Users\zig");
+        let ids: Vec<&str> = got.iter().map(|s| s.session_id.as_str()).collect();
+        assert_eq!(ids.len(), 1);
+        assert!(ids.contains(&SESSION));
     }
 
     #[test]
