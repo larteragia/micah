@@ -6,7 +6,49 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { mapScanFiles, touchedTopDirs } from "./useMindFeed";
+import {
+  composePick,
+  mapScanFiles,
+  touchedTopDirs,
+  type MindSessionPick,
+} from "./useMindFeed";
+
+describe("composePick (âncora > manual > auto)", () => {
+  const anchored: MindSessionPick = { session: "aaa", why: "focused-leaf" };
+  const none: MindSessionPick = { session: null, why: "none" };
+
+  it("real anchor beats manual and auto", () => {
+    expect(composePick(anchored, "bbb", { session: "ccc", forCwd: "x" }))
+      .toEqual(anchored);
+  });
+  it("manual beats auto when nothing is anchored", () => {
+    expect(composePick(none, "bbb", { session: "ccc", forCwd: "x" })).toEqual({
+      session: "bbb",
+      why: "manual",
+    });
+  });
+  it("auto connects only when anchor and manual are absent", () => {
+    expect(composePick(none, null, { session: "ccc", forCwd: "x" })).toEqual({
+      session: "ccc",
+      why: "auto-recent",
+    });
+  });
+  it("auto without a found session keeps the honest empty verdict", () => {
+    expect(composePick(none, null, { session: null, forCwd: "x" })).toEqual(
+      none,
+    );
+    expect(composePick(none, null, null)).toEqual(none);
+  });
+  it("ambiguous stays ambiguous: auto never guesses over pane rules", () => {
+    const amb: MindSessionPick = { session: null, why: "ambiguous" };
+    expect(composePick(amb, null, { session: "z", forCwd: "x" })).toEqual(amb);
+    // A manual choice still resolves the ambiguity: the user picked.
+    expect(composePick(amb, "m", null)).toEqual({
+      session: "m",
+      why: "manual",
+    });
+  });
+});
 
 describe("mapScanFiles", () => {
   const ROOT = "C:/Users/Zigfriad/projetos/micah";

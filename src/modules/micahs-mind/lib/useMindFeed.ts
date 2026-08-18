@@ -42,7 +42,13 @@ const MAX_SCAN_ROOTS = 8;
 
 export type MindSessionPick = {
   session: string | null;
-  why: "focused-leaf" | "single-anchored" | "ambiguous" | "none";
+  why:
+    | "focused-leaf"
+    | "single-anchored"
+    | "ambiguous"
+    | "none"
+    | "manual"
+    | "auto-recent";
 };
 
 /**
@@ -83,6 +89,26 @@ export function touchedTopDirs(rels: string[]): string[] {
     if (!out.includes(top)) out.push(top);
   }
   return out;
+}
+
+/**
+ * Fixed priority for what the scene follows (card sempre-visivel): a real
+ * anchor beats a manual picker choice, a manual choice beats the
+ * auto-connect. Everything else keeps the anchored verdict (including
+ * ambiguous/none) so the picker never guesses over the pane rules.
+ */
+export function composePick(
+  anchored: MindSessionPick,
+  manualSession: string | null,
+  auto: { session: string | null; forCwd: string } | null,
+): MindSessionPick {
+  if (anchored.session) return anchored;
+  if (manualSession) return { session: manualSession, why: "manual" };
+  // Ambiguous means two anchored panes and a refusal to guess: connecting a
+  // third, unrelated session would guess harder, not less.
+  if (anchored.why !== "none") return anchored;
+  if (auto?.session) return { session: auto.session, why: "auto-recent" };
+  return anchored;
 }
 
 function dropLeadingPartialLine(chunk: string): string {
@@ -154,7 +180,8 @@ async function scanEntries(
 }
 
 export type MindFeed = {
-  status: "off" | "probing" | "feed" | "absent";
+  /** city = city-only mode: repo city without any transcript. */
+  status: "off" | "probing" | "feed" | "absent" | "city" | "missing";
   pick: MindSessionPick;
   fold: MindFold | null;
   city: CityMap | null;
@@ -167,8 +194,14 @@ export type MindFeed = {
  * Follow the picked session transcript from byte zero and keep the fold and
  * the frozen city up to date. Only one feed runs at a time (one scene), and
  * polling stops the moment the consumer unmounts or the pick goes null.
+ * With no session but a cityRoot, the scene still draws: the repository
+ * city from a plain scan, dark and untouched.
  */
-export function useMindFeed(pick: MindSessionPick, enabled: boolean): MindFeed {
+export function useMindFeed(
+  pick: MindSessionPick,
+  enabled: boolean,
+  cityRoot?: string | null,
+): MindFeed {
   const [state, setState] = useState<MindFeed>({
     status:
       pick.session && enabled ? "probing" : pick.session ? "off" : "absent",
@@ -181,13 +214,44 @@ export function useMindFeed(pick: MindSessionPick, enabled: boolean): MindFeed {
 
   const pickRef = useRef(pick);
   pickRef.current = pick;
+  const cityRootRef = useRef(cityRoot);
+  cityRootRef.current = cityRoot;
+
+  // City-only: no transcript to follow, the pane cwd is the map. Pure scan,
+  // zero touched files, no polling — the dark city that is always there.
+  useEffect(() => {
+    if (!enabled || pick.session || !cityRoot) return;
+    let alive = true;
+    setState((s) => ({
+      ...s,
+      status: "city",
+      pick: pickRef.current,
+      fold: null,
+      lateGhosts: new Map(),
+      version: s.version + 1,
+    }));
+    void (async () => {
+      const entries = await scanEntries(cityRoot, null);
+      if (!alive) return;
+      const city = buildCityMap({ root: cityRoot, entries, touched: [] });
+      if (!alive) return;
+      setState((s) => ({ ...s, city, version: s.version + 1 }));
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [enabled, pick.session, cityRoot]);
 
   useEffect(() => {
     const sessionId = pick.session;
     if (!enabled || !sessionId) {
       setState((s) => ({
         ...s,
-        status: sessionId ? "off" : "absent",
+        status: sessionId
+          ? "off"
+          : cityRootRef.current
+            ? "city"
+            : "absent",
         pick: pickRef.current,
       }));
       return;
@@ -259,7 +323,9 @@ export function useMindFeed(pick: MindSessionPick, enabled: boolean): MindFeed {
         if (!alive) return;
         if (!tail.found) {
           delay = ABSENT_POLL_MS;
-          publish(synced ? "feed" : "absent");
+          // Transcript vanished mid-flight: the synced city and fold stay on
+          // screen, only the badge tells the truth (auditor correction 8).
+          publish(synced ? "missing" : "absent");
         } else {
           if (tail.next_offset < offset) {
             // File shrank or was replaced: refold from zero or the trace
@@ -303,7 +369,7 @@ export function useMindFeed(pick: MindSessionPick, enabled: boolean): MindFeed {
       } catch {
         if (!alive) return;
         delay = ABSENT_POLL_MS;
-        publish(synced ? "feed" : "absent");
+        publish(synced ? "missing" : "absent");
       }
       if (alive) timer = setTimeout(() => void tick(), delay);
     };

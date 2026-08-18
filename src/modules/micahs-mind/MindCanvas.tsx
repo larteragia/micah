@@ -27,6 +27,17 @@ const UNVISITED_EDGE = "rgba(51,65,85,0.35)";
 const DIR_EDGE = "rgba(148,163,184,0.07)";
 const BUCKETS = 96;
 
+/** Honest badges: what the feed knows, in the user's language. */
+const STATUS_LABEL: Record<string, { text: string; tone: "default" | "warn" }> =
+  {
+    off: { text: "desligado", tone: "default" },
+    probing: { text: "conectando", tone: "default" },
+    feed: { text: "ao vivo", tone: "default" },
+    absent: { text: "sem transcript", tone: "default" },
+    city: { text: "cidade sem sessão", tone: "default" },
+    missing: { text: "transcript ausente", tone: "warn" },
+  };
+
 type Camera = { x: number; z: number; scale: number };
 
 type Pointers = Map<number, { x: number; y: number }>;
@@ -416,7 +427,10 @@ export function MindCanvas({ feed }: { feed: MindFeed }) {
       ) : null}
       <div className="pointer-events-none absolute top-2 left-2 flex flex-wrap gap-1.5 text-[10px] text-slate-400">
         <Badge>Micah&apos;s Mind</Badge>
-        <Badge>{feed.status}</Badge>
+        <Badge tone={STATUS_LABEL[feed.status]?.tone ?? "default"}>
+          {STATUS_LABEL[feed.status]?.text ?? feed.status}
+        </Badge>
+        {fold ? <Badge>{fold.session.id.slice(0, 8)}</Badge> : null}
         {stats ? <Badge>{fold?.events.length ?? 0} eventos</Badge> : null}
         {stats ? <Badge>{stats.edited} editados</Badge> : null}
         {stats ? <Badge>{stats.fovea} lidos</Badge> : null}

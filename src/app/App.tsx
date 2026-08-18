@@ -1022,6 +1022,17 @@ export default function App() {
     return null;
   }, []);
 
+  // Mirror of resolveLeafResume for the pane cwd (OSC 7): the Mind draws the
+  // repository city from it even before any session exists.
+  const resolveLeafCwd = useCallback((leafId: number): string | null => {
+    for (const t of tabsRef.current) {
+      if (t.kind !== "terminal") continue;
+      const cwd = findLeafCwd(t.paneTree, leafId);
+      if (cwd !== undefined) return cwd;
+    }
+    return null;
+  }, []);
+
   const handleCloseTabOrPane = useCallback(() => {
     // Cmd+W follows the focused pane like every other keyboard action; a
     // terminal with a live process in the center must not die to a close
@@ -1740,6 +1751,7 @@ export default function App() {
                       <div className="absolute inset-0 bg-card">
                         <MicahsMindArea
                           resolveLeafResume={resolveLeafResume}
+                          resolveLeafCwd={resolveLeafCwd}
                           anchoredLeaves={anchoredLeaves}
                           visibleLeafIds={visibleLeafIds}
                           activeLeafId={activeLeafId}
