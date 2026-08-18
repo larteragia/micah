@@ -256,8 +256,60 @@ commit mentem (23 testes verdes como commitado, tsc/biome limpos).
 
 ## Validacao independente
 
-(pendente: veredito item por item do critério de aceite, com prova anexa)
+Veredito item por item do criterio de aceite (validador GLM independente do
+executor, 2026-08-17/18, provas em .proofs-micahs-mind/):
+
+1. PONTOS COM COR POR TOQUE — **pass.** Captura da janela em execucao
+   (.proofs-micahs-mind/15-criterion1-final.png, window-shot PrintWindow
+   PW_RENDERFULLCONTENT, 2904x1572 fisico): cidade treemap com pontos
+   verde/azul/ambar/escuro, cabecalho do painel com a sessao ancorada
+   (f387d731-0bfe-4486-b3a9-26185f2ab9c1), repo e legenda das quatro cores.
+   `grep '"three"' package.json` vazio (zero dependencia nova).
+2. PAN/ZOOM/CLIQUE — pan comprovado por arraste real (15-criterion1-final.png
+   vs 16-after-pan.png, pontos deslocados); zoom (roda) e clique-ponto
+   BLOQUEADOS: a janela foi fechada pelo comandante 6x durante a validacao
+   (02h da manha, ele ciclando o app; zero eventos de crash no Event Log do
+   Windows — fechamento humano, nao defeito). Scripts prontos no kit:
+   window-wheel.ps1 (novo) e window-type.ps1 (novo) completam a prova em
+   qualquer janela livre.
+3. STREAMING < 3 s — BLOQUEADO pela mesma condicao; detector de latencia
+   preparado (watcher do JSONL com timestamps + shots antes/depois no script
+   micah-proof-batch.ps1). Achado correlato: pane de aba ressuscitada rodou
+   PowerShell SEM o profile de shell-integration (31-diag-function.png,
+   Test-Path Function:claude False) — a jornada de ancora claude-numa-aba
+   quebra nesse caminho de spawn (achado registrado no memorium, raiz
+   pendente; nao afeta o parser/feed do Mind, so a ancoragem automatica).
+4. TROCA DE ABA TROCA O MIND — parcialmente comprovado: clicar na 2a aba
+   SEM ancora manteve a cidade da unica sessao ancorada (crop-hdr-24.png
+   identico a crop-hdr-27.png = fallback E4 conforme especificado); a prova
+   com DUAS ancoras distintas BLOQUEADA pela condicao de 2/3.
+5. LABEL MICAH'S MIND COM ID PRESERVADO — **pass.** Captura do seletor
+   (.proofs-micahs-mind/21-criterion5-label.png: abas "Browser" e
+   "Micah's Mind") + vitest src/modules/left-panel/lib/mode.test.ts 10/10
+   verdes rodado no fechamento (coerce mantem `ai-viewer` valido).
+6. DEMOLICAO + SUITES — **pass.** Commits 36412b9 (demolicao em commit
+   proprio), vitest 846/846, check-types, clippy -D warnings, cargo check
+   --no-default-features verdes (sessao de implementacao, checkpoint
+   oracle-rag handle micahs-mind).
+7. REPORT COM JUIZ GLM — **pass.** memoria oracle-rag 108625 embedded:true
+   criada por scripts/micahs-mind-report.mjs (stdout com id + timestamp na
+   sessao de implementacao).
+8. BINARIO RECONSTRUIDO LIDO DO AR — **pass.** pnpm tauri build --no-bundle
+   verde em 3m00s (log micah-tauri-build.log); micah.exe novo
+   9640960 bytes de 2026-08-17 21:20:07 -0300; executando reportou
+   `[2026-08-18][00:22:25][micah_lib][INFO] micah build 36412b9` (= HEAD
+   E6, commit da demolicao) no log da instancia viva.
 
 ## Rastro
 
-(pendente: arquivos tocados, commits, leitura do ar)
+- Commits: 6587d1a (E1), ca77591 (E1 auditoria + E2/E3/E4), 385883e (E5),
+  36412b9 (E6 demolicao) em main.
+- Arquivos-chave: src/modules/micahs-mind/ (parser, fold, citymap, cena
+  Canvas 2D, feed), MicahsMindArea no App, store+lanes migrados para
+  src/modules/ai/lib, scripts/micahs-mind-report.mjs,
+  scripts/window-wheel.ps1 e window-type.ps1 (kit de prova).
+- Deploy: micah.exe 36412b9 em execucao no zig-laptop desde 2026-08-17
+  21:20 -0300; comandante usou o app com o Mind ativo durante a validacao.
+- Provas: docs/proof/micahs-mind/ (00 a 28, capturas window-shot + crops;
+  originais geradas em .proofs-micahs-mind/ durante a validacao).
+

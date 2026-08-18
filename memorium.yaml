@@ -131,6 +131,28 @@ verificacao:
     reportando sucesso.
 
 rondas_pdi:
+  - card: micahs-mind-2026-08-17
+    titulo: "Micah's Mind: rastro luminoso da AI no lugar do AI Viewer"
+    data: 2026-08-18T01:30:00-03:00
+    resultado: "deploy done — parser/fold, citymap treemap congelado, cena Canvas 2D (zero dependencia nova), sync por aba, report com juiz GLM gravando no oracle-rag (memoria 108625), demolicao do viewer velho em commit proprio; binario 36412b9 reconstruido, executado e reportando build id no log; provas de janela dos criterios 1 e 5 colhidas com o comandante usando o app ao vivo (criterios 2/3/4 pendentes de janela livre)"
+    prova:
+      artefato: "micah build 36412b9 (= HEAD E6, commit da demolicao)"
+      verificado_em: "src-tauri/target/release/micah.exe 9640960 bytes de 2026-08-17 21:20:07 -0300, build verde em 3m00s (log micah-tauri-build.log)"
+      saida: "[2026-08-18][00:22:25][micah_lib][INFO] micah build 36412b9 no log da instancia viva com stdout redirecionado; cidade com 4 cores + legenda capturada em .proofs-micahs-mind/15-criterion1-final.png; seletor com label Micah's Mind em 21-criterion5-label.png; mode.test.ts 10/10 (coerce mantem ai-viewer)"
+    achados:
+      - categoria: "Instrumentacao"
+        etapa: E2
+        evidencia: "pane de aba ressuscitada rodou PowerShell SEM o profile de shell-integration (Test-Path Function:claude False em .proofs-micahs-mind/31-diag-function.png, claude 'nao reconhecido') com profile.ps1 correto em ~/.cache/micah/shell-integration/ e sem warn no log — a jornada de ancora claude-numa-aba quebra nesse caminho de spawn; pendente raiz (nao era o caso do pty do boot)"
+      - categoria: "Estado e persistencia"
+        etapa: E4
+        evidencia: "clicar numa aba SEM sessao ancorada mantem a cidade da unica ancorada (crop-hdr-24.png identico a crop-hdr-27.png) — fallback E4 funcionando como especificado; criterio 4 exige duas ancoras distintas"
+      - categoria: "Falha externa"
+        etapa: prova
+        evidencia: "window-click/window-drag falham SILENCIOSAMENTE quando o micah nao esta em primeiro plano (SetForegroundWindow bloqueado por protecao de foco): clique reporta sucesso e cai em outra janela; adicionado activate-micah com verificacao GetForegroundWindow antes de qualquer input sintetico"
+      - categoria: "Volume"
+        etapa: prova
+        evidencia: "PrintWindow dedupe por conteudo (CDN reaproveita URL de byte-identico) virou detector de no-op: recorte pos-zoom identico ao pos-pan provou que o wheel nao registrou antes de se gastar shot"
+
   - card: explorer-raiz-livre-nas-2026-08-15
     titulo: "Explorer com raiz livre: navegar ate o NAS, com a lupa junto"
     data: 2026-08-15T09:20:00-03:00
