@@ -146,17 +146,19 @@ export function MicahsMindArea({
   );
 
   // Auto-connect, once per cwd: only when nothing is anchored and nothing
-  // was manually chosen. The command scopes by the transcript's own cwd
-  // (deepest ancestor with sessions), so a pane inside a repo finds that
-  // repo and a pane at home finds home sessions.
+  // was manually chosen. A project-looking cwd scopes to its own location
+  // tree (a repo with no sessions stays in the dark-city state); a
+  // non-project cwd goes global — the disconnected live session the
+  // commander wants to see is usually the freshest anywhere.
   useEffect(() => {
     if (!focusedCwd || manualSession || anchoredPick.session) return;
     if (auto?.forCwd === focusedCwd) return;
+    if (scannable === null) return;
     let alive = true;
     void (async () => {
       try {
         const res = await invoke<RecentSession[]>("claude_sessions_recent", {
-          cwd: focusedCwd,
+          cwd: scannable ? focusedCwd : null,
           limit: 5,
         });
         if (!alive) return;
@@ -173,7 +175,7 @@ export function MicahsMindArea({
     return () => {
       alive = false;
     };
-  }, [focusedCwd, manualSession, anchoredPick.session, auto?.forCwd]);
+  }, [focusedCwd, scannable, manualSession, anchoredPick.session, auto?.forCwd]);
 
   const feed = useMindFeed(pick, active, scannable ? focusedCwd : null);
 

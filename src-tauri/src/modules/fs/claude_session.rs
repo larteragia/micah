@@ -372,17 +372,10 @@ pub async fn claude_sessions_recent(
     let roots = transcript_roots(&home);
     let mut out = match cwd.as_deref().map(str::trim).filter(|c| !c.is_empty())
     {
-        Some(cwd) => {
-            let scoped = collect_repo_sessions(&roots, cwd);
-            if scoped.is_empty() {
-                // Nothing in the cwd's location tree: the freshest anywhere
-                // beats an empty panel (the commander's disconnected live
-                // session is often exactly this).
-                collect_global_sessions(&roots)
-            } else {
-                scoped
-            }
-        }
+        // Repo-scoped only: the caller decides between scoped and global
+        // (it knows whether the cwd smells like a project); a repo with no
+        // sessions must stay empty so the dark city has its honest moment.
+        Some(cwd) => collect_repo_sessions(&roots, cwd),
         None => collect_global_sessions(&roots),
     };
     out.sort_by(|a, b| {
