@@ -131,6 +131,33 @@ verificacao:
     reportando sucesso.
 
 rondas_pdi:
+  - card: micahs-mind-sempre-visivel-2026-08-18
+    titulo: "Micah's Mind sempre visível: cidade sem sessão, auto-conexão e seletor"
+    data: 2026-08-18T15:30:00-03:00
+    resultado: "done — o painel nunca mais acorda vazio: cidade escura do repo sem transcript (gate de cheiro de projeto), auto-conexão na sessão mais fresca do local (sondagem por ancestrais com verificação de cwd na 1ª linha do transcript; global fora de repo), seletor clicável com prioridade âncora>manual>auto, selo âmbar 'transcript ausente' com cidade de pé; 7/7 critérios aprovados com provas frescas na janela real"
+    prova:
+      artefato: "micah build 6b1f761-dirty (= HEAD do card; -dirty por 3 arquivos de estilo tocados fora do card, preservados)"
+      verificado_em: "src-tauri/target/release/micah.exe reconstruído 2026-08-18 14:34 -0300, em execução no zig-laptop desde 14:37 -0300 (PID 28500 com stdout capturado)"
+      saida: "[2026-08-18][17:37:01][micah_lib][INFO] micah build 6b1f761-dirty + [17:37:01][INFO] claude_sessions_recent cwd=Some(\"C:/Users/Zigfriad/projetos/micah\") -> 6 sessions + provas 50-66 em docs/proof/micahs-mind-sempre-visivel/"
+    achados:
+      - categoria: "Regressão"
+        etapa: E0
+        evidencia: "scanEntries tratava fs_list_files como ABS e filtrava por prefixo: todo arquivo descartado, o scan NUNCA contribuiu para cidade alguma (search.rs:211-218 devolve REL; cidade do card 17/08 era tocados-only). Corrigido com mapScanFiles + teste pinando o contrato"
+      - categoria: "Instrumentação"
+        etapa: E5
+        evidencia: "shell-integration do PTY inoperante em TODA pane (ressuscitada E nova): __MICAH_HOOKS_LOADED False (64-freshtab-hooks.png), profile.ps1 correto no disco e True/True standalone, log sem warn — OSC 7/133/âncora claude mortos; cd ao vivo não atualiza o cwd da pane; raiz em aberto, card próprio recomendado (achado do 17/08 era só-ressuscitada, provou-se geral)"
+      - categoria: "Volume"
+        etapa: E1b
+        evidencia: "sonda de ancestral no nível de drive casava todos os dirs com verificação vacua (13 dirs/348 jsonl medidos): sonda agora começa no nível 2 e o global é escolha explícita do frontend (que sabe o gate de cheiro de projeto)"
+      - categoria: "Entrada vazia ou suja"
+        etapa: E2
+        evidencia: "city-only escanearia QUALQUER cwd (HOME = walk de lixo): gate fs_read_dir 1º nível procura marcador de projeto (.git/package.json/Cargo.toml/go.mod/pyproject/deno/pnpm-workspace) antes de scan pesado"
+      - categoria: "Concorrência"
+        etapa: E3
+        evidencia: "prioridade fixa âncora>manual>auto com auto 1x por cwd e override em memória descartado na troca de pane; tie-break determinístico mtime/size/id; ambiguous nunca é atropelado pelo auto (composePick testado)"
+      - categoria: "Estado e persistência"
+        etapa: E4
+        evidencia: "transcript que some: synced=missing mantém cidade/fold (badge âmbar), nunca-synced=absent; troca sessão→cidade zera a cidade colorida antiga (cidade morta sob selo seria mentira); contrato absentStatus pinado em teste"
   - card: micahs-mind-2026-08-17
     titulo: "Micah's Mind: rastro luminoso da AI no lugar do AI Viewer"
     data: 2026-08-18T01:30:00-03:00
