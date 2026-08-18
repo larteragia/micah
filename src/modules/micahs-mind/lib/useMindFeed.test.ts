@@ -49,14 +49,24 @@ describe("composePick (âncora > manual > auto)", () => {
     );
     expect(composePick(none, null, null)).toEqual(none);
   });
-  it("ambiguous stays ambiguous: auto never guesses over pane rules", () => {
+  it("ambiguous no longer blocks the auto-connect: replay badge labels it", () => {
     const amb: MindSessionPick = { session: null, why: "ambiguous" };
-    expect(composePick(amb, null, { session: "z", forCwd: "x" })).toEqual(amb);
-    // A manual choice still resolves the ambiguity: the user picked.
-    expect(composePick(amb, "m", null)).toEqual({
+    // Two anchored panes with no focus: the freshest labeled session beats
+    // an empty panel (user reported exactly this as "não aparece nada").
+    expect(composePick(amb, null, { session: "z", forCwd: "x" })).toEqual({
+      session: "z",
+      why: "auto-recent",
+    });
+    // A manual choice still wins over auto.
+    expect(composePick(amb, "m", { session: "z", forCwd: "x" })).toEqual({
       session: "m",
       why: "manual",
     });
+    // A real anchor still wins over everything.
+    const anchored: MindSessionPick = { session: "live", why: "focused-leaf" };
+    expect(
+      composePick(anchored, "m", { session: "z", forCwd: "x" }),
+    ).toEqual(anchored);
   });
 });
 

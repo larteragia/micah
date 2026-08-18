@@ -94,8 +94,10 @@ export function touchedTopDirs(rels: string[]): string[] {
 /**
  * Fixed priority for what the scene follows (card sempre-visivel): a real
  * anchor beats a manual picker choice, a manual choice beats the
- * auto-connect. Everything else keeps the anchored verdict (including
- * ambiguous/none) so the picker never guesses over the pane rules.
+ * auto-connect. An ambiguous verdict (two anchored panes, no focus) no
+ * longer blocks the auto-connect: with the selector and the replay badge
+ * on screen, following the freshest session of the location is labeled
+ * provenance, not guessing — and the user can pick another in one click.
  */
 export function composePick(
   anchored: MindSessionPick,
@@ -104,9 +106,6 @@ export function composePick(
 ): MindSessionPick {
   if (anchored.session) return anchored;
   if (manualSession) return { session: manualSession, why: "manual" };
-  // Ambiguous means two anchored panes and a refusal to guess: connecting a
-  // third, unrelated session would guess harder, not less.
-  if (anchored.why !== "none") return anchored;
   if (auto?.session) return { session: auto.session, why: "auto-recent" };
   return anchored;
 }
