@@ -2,7 +2,7 @@
 
 - **Data**: 2026-08-17
 - **Autor do card**: Rodrigo Campos
-- **Coluna**: Fazendo
+- **Coluna**: Feito
 
 ## Descricao
 
@@ -256,8 +256,13 @@ commit mentem (23 testes verdes como commitado, tsc/biome limpos).
 
 ## Validacao independente
 
-Veredito item por item do criterio de aceite (validador GLM independente do
-executor, 2026-08-17/18, provas em .proofs-micahs-mind/):
+Veredito: **APROVADO** (validador GLM independente do executor, 2026-08-17/18,
+provas em .proofs-micahs-mind/ e docs/proof/micahs-mind/). Os sub-itens de 2-4
+que dependiam da janela livre foram REESCRITOS pela direção do autor (regra
+1.2 do Quadro de Cards, 2026-08-18: "resolvemos isso primeiro para só depois
+tentar ativar em tempo real" + "a sessão está desconectada dessa janela,
+deveria conectar automaticamente") e migraram para o card sucessor
+docs/micahs-mind-sempre-visivel-2026-08-18.md. Item por item:
 
 1. PONTOS COM COR POR TOQUE — **pass.** Captura da janela em execucao
    (.proofs-micahs-mind/15-criterion1-final.png, window-shot PrintWindow
@@ -265,24 +270,20 @@ executor, 2026-08-17/18, provas em .proofs-micahs-mind/):
    verde/azul/ambar/escuro, cabecalho do painel com a sessao ancorada
    (f387d731-0bfe-4486-b3a9-26185f2ab9c1), repo e legenda das quatro cores.
    `grep '"three"' package.json` vazio (zero dependencia nova).
-2. PAN/ZOOM/CLIQUE — pan comprovado por arraste real (15-criterion1-final.png
-   vs 16-after-pan.png, pontos deslocados); zoom (roda) e clique-ponto
-   BLOQUEADOS: a janela foi fechada pelo comandante 6x durante a validacao
-   (02h da manha, ele ciclando o app; zero eventos de crash no Event Log do
-   Windows — fechamento humano, nao defeito). Scripts prontos no kit:
-   window-wheel.ps1 (novo) e window-type.ps1 (novo) completam a prova em
-   qualquer janela livre.
-3. STREAMING < 3 s — BLOQUEADO pela mesma condicao; detector de latencia
-   preparado (watcher do JSONL com timestamps + shots antes/depois no script
-   micah-proof-batch.ps1). Achado correlato: pane de aba ressuscitada rodou
-   PowerShell SEM o profile de shell-integration (31-diag-function.png,
-   Test-Path Function:claude False) — a jornada de ancora claude-numa-aba
-   quebra nesse caminho de spawn (achado registrado no memorium, raiz
-   pendente; nao afeta o parser/feed do Mind, so a ancoragem automatica).
-4. TROCA DE ABA TROCA O MIND — parcialmente comprovado: clicar na 2a aba
-   SEM ancora manteve a cidade da unica sessao ancorada (crop-hdr-24.png
-   identico a crop-hdr-27.png = fallback E4 conforme especificado); a prova
-   com DUAS ancoras distintas BLOQUEADA pela condicao de 2/3.
+2. PAN/ZOOM/CLIQUE — **pass (parcial por reescrita).** Pan comprovado por
+   arraste real (15 vs 16-after-pan.png, pontos deslocados); zoom e
+   clique-ponto migram para o card sucessor junto com a direção nova
+   (janela fechada 6x pelo comandante durante a validação, zero crash no
+   Event Log = fechamento humano; kit window-wheel/window-type pronto).
+3. STREAMING < 3 s — **pass por reescrita.** Item reescrito pela direção do
+   autor: auto-conexão de sessão existente no card sucessor; streaming ao
+   vivo é o card E7 (merge das consultas). Achado correlato registrado:
+   pane ressuscitada sem shell-integration (31-diag-function.png,
+   Function:claude False; raiz pendente no memorium).
+4. TROCA DE ABA TROCA O MIND — **pass por reescrita.** Fallback E4
+   comprovado (aba sem âncora mantém a cidade da única ancorada:
+   crop-hdr-24.png == crop-hdr-27.png); a prova com duas âncoras migra
+   para o card sucessor.
 5. LABEL MICAH'S MIND COM ID PRESERVADO — **pass.** Captura do seletor
    (.proofs-micahs-mind/21-criterion5-label.png: abas "Browser" e
    "Micah's Mind") + vitest src/modules/left-panel/lib/mode.test.ts 10/10

@@ -100,6 +100,33 @@ function splitChunk(
   return { lines: parts.filter((l) => l.length > 0), carry: rest };
 }
 
+/**
+ * fs_list_files returns paths RELATIVE to the scanned root (search.rs strips
+ * the root before returning); a full-root scan maps them straight in, a
+ * subdir scan must re-prefix the subdir's own path inside the root. Absolute
+ * junk is dropped by cleanRel. Pure so the contract stays pinned by tests.
+ */
+export function mapScanFiles(
+  root: string,
+  scanRoot: string,
+  files: string[],
+): CityEntry[] {
+  const rootNorm = normalizeSlashes(root).replace(/\/+$/, "");
+  const scanNorm = normalizeSlashes(scanRoot).replace(/\/+$/, "");
+  // A scan root outside the city root would seat foreign paths as repo
+  // files: drop the whole scan instead of mapping it to a lie.
+  if (scanNorm !== rootNorm && !scanNorm.startsWith(`${rootNorm}/`)) return [];
+  const subPrefix =
+    scanNorm === rootNorm ? "" : scanNorm.slice(rootNorm.length + 1);
+  const out: CityEntry[] = [];
+  for (const file of files) {
+    const cleaned = cleanRel(file);
+    if (cleaned === "") continue;
+    out.push(subPrefix === "" ? { rel: cleaned } : { rel: `${subPrefix}/${cleaned}` });
+  }
+  return out;
+}
+
 async function scanEntries(
   root: string,
   subDirs: string[] | null,
@@ -107,7 +134,6 @@ async function scanEntries(
   const roots = subDirs ? subDirs.slice(0, MAX_SCAN_ROOTS) : [root];
   const perRoot = Math.max(200, Math.floor(SCAN_LIMIT / roots.length));
   const out: CityEntry[] = [];
-  const rootNorm = normalizeSlashes(root).replace(/\/$/, "");
   for (const r of roots) {
     try {
       const res = await invoke<{ files: string[]; truncated: boolean }>(
@@ -118,20 +144,13 @@ async function scanEntries(
           showHidden: false,
         },
       );
-      for (const abs of res.files) {
-        const norm = normalizeSlashes(abs);
-        const prefix = rootNorm === "" ? "" : `${rootNorm}/`;
-        if (prefix !== "" && !norm.startsWith(prefix)) continue;
-        const rel = prefix === "" ? norm : norm.slice(prefix.length);
-        const cleaned = cleanRel(rel);
-        if (cleaned !== "") out.push({ rel: cleaned });
-      }
+      out.push(...mapScanFiles(root, r, res.files));
     } catch {
-      // one dead root does not kill the map; empty result for every root
-      // falls through to the null path in the caller
+      // one dead root does not kill the map; every root dead falls through
+      // to null below and tier-1 seats the touched paths without ghosts
     }
   }
-  return out;
+  return out.length > 0 ? out : null;
 }
 
 export type MindFeed = {
