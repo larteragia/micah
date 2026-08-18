@@ -145,15 +145,16 @@ export function MicahsMindArea({
     [anchoredPick, manualSession, auto],
   );
 
-  // Auto-connect, once per cwd: only when nothing is anchored and nothing
-  // was manually chosen. A project-looking cwd scopes to its own location
-  // tree (a repo with no sessions stays in the dark-city state); a
-  // non-project cwd goes global — the disconnected live session the
-  // commander wants to see is usually the freshest anywhere.
+  // Auto-connect, once per pane context: only when nothing is anchored and
+  // nothing was manually chosen. A project-looking cwd scopes to its own
+  // location tree; anything else — a non-project folder OR a pane with no
+  // known cwd (no OSC 7 yet) — goes global: the freshest session anywhere
+  // beats an empty panel, and the replay badge keeps the provenance honest.
+  const autoKey = focusedCwd ?? "";
   useEffect(() => {
-    if (!focusedCwd || manualSession || anchoredPick.session) return;
-    if (auto?.forCwd === focusedCwd) return;
-    if (scannable === null) return;
+    if (manualSession || anchoredPick.session) return;
+    if (auto?.forCwd === autoKey) return;
+    if (focusedCwd !== null && scannable === null) return;
     let alive = true;
     void (async () => {
       try {
@@ -177,17 +178,17 @@ export function MicahsMindArea({
         }
         setAuto({
           session: res[0]?.session_id ?? null,
-          forCwd: focusedCwd,
+          forCwd: autoKey,
         });
       } catch {
         if (!alive) return;
-        setAuto({ session: null, forCwd: focusedCwd });
+        setAuto({ session: null, forCwd: autoKey });
       }
     })();
     return () => {
       alive = false;
     };
-  }, [focusedCwd, scannable, manualSession, anchoredPick.session, auto?.forCwd]);
+  }, [autoKey, focusedCwd, scannable, manualSession, anchoredPick.session, auto?.forCwd]);
 
   const feed = useMindFeed(pick, active, scannable ? focusedCwd : null);
 
