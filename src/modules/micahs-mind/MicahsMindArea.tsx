@@ -93,6 +93,45 @@ export function MicahsMindArea({
       ? resolveLeafCwd(activeLeafId)
       : null;
 
+  // Repo smell gate (auditor 2): the dark city only scans a cwd that looks
+  // like a project root; scanning an arbitrary folder (the user's home, a
+  // drive) would walk garbage for nothing.
+  const [scannable, setScannable] = useState<boolean | null>(null);
+  useEffect(() => {
+    if (!focusedCwd) {
+      setScannable(null);
+      return;
+    }
+    let alive = true;
+    void (async () => {
+      try {
+        const entries = await invoke<{ name: string }[]>("fs_read_dir", {
+          path: focusedCwd,
+          showHidden: true,
+        });
+        if (!alive) return;
+        const markers = [
+          ".git",
+          ".hg",
+          ".svn",
+          "package.json",
+          "Cargo.toml",
+          "go.mod",
+          "pyproject.toml",
+          "deno.json",
+          "pnpm-workspace.yaml",
+        ];
+        setScannable(entries.some((e) => markers.includes(e.name)));
+      } catch {
+        if (!alive) return;
+        setScannable(false);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [focusedCwd]);
+
   // The focused pane rules: switching pane/tab drops both the manual choice
   // and the auto-connect so the next pane starts its own resolution.
   useEffect(() => {
@@ -136,7 +175,20 @@ export function MicahsMindArea({
     };
   }, [focusedCwd, manualSession, anchoredPick.session, auto?.forCwd]);
 
-  const feed = useMindFeed(pick, active, focusedCwd);
+  const feed = useMindFeed(pick, active, scannable ? focusedCwd : null);
+
+  // Provenance badge: a replayed session must never read as "ao vivo"
+  // (auditor 1, criterion 2).
+  const sessionBadge = useMemo(() => {
+    if (!pick.session) return null;
+    if (pick.why === "focused-leaf" || pick.why === "single-anchored")
+      return null;
+    const mtime =
+      recent.find((r) => r.session_id === pick.session)?.mtime_ms ?? null;
+    const age = mtime != null ? ` · ${ageLabel(mtime)}` : "";
+    if (pick.why === "manual") return { text: `escolhida${age}` };
+    return { text: `replay${age}` };
+  }, [pick, recent]);
 
   const setActivePersisted = (next: boolean) => {
     writeAiViewerActive(next);
@@ -167,12 +219,17 @@ export function MicahsMindArea({
     );
   }
 
-  // No session AND no resolvable pane cwd: nothing honest to draw yet.
-  if (!pick.session && !focusedCwd) {
+  // No session AND no honest city to draw (no pane cwd, or the cwd is not a
+  // project root): nothing to show but the reason.
+  if (!pick.session && (!focusedCwd || scannable === false)) {
     return (
       <LeftPanelEmpty
         title="Nenhuma sessão para seguir"
-        hint={WHY_TEXT[pick.why]}
+        hint={
+          focusedCwd
+            ? "pasta atual não é um projeto e não há sessão recente para conectar"
+            : WHY_TEXT[pick.why]
+        }
       />
     );
   }
@@ -180,7 +237,7 @@ export function MicahsMindArea({
   return (
     <div className="relative flex h-full min-h-0 flex-col bg-[#07090f]">
       <Suspense fallback={<div className="flex-1" />}>
-        <MindCanvas feed={feed} />
+        <MindCanvas feed={feed} sessionBadge={sessionBadge} />
       </Suspense>
       <div className="absolute top-2 right-2 z-20 flex flex-col items-end gap-1">
         <button

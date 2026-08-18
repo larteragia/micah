@@ -323,7 +323,10 @@ fn collect_repo_sessions(roots: &[PathBuf], cwd: &str) -> Vec<RecentSession> {
         .split('/')
         .filter(|s| !s.is_empty() && *s != ".")
         .collect();
-    for depth in (1..=raw_parts.len()).rev() {
+    // Depth 1 is the bare drive ("C:"): its munge prefix would match every
+    // project on the machine with a vacuous cwd check. The explicit global
+    // collect covers that case far cheaper (auditor 5).
+    for depth in (2..=raw_parts.len()).rev() {
         let candidate = raw_parts[..depth].join("/");
         let found = collect_for_candidate(roots, &candidate);
         if !found.is_empty() {
@@ -369,7 +372,17 @@ pub async fn claude_sessions_recent(
     let roots = transcript_roots(&home);
     let mut out = match cwd.as_deref().map(str::trim).filter(|c| !c.is_empty())
     {
-        Some(cwd) => collect_repo_sessions(&roots, cwd),
+        Some(cwd) => {
+            let scoped = collect_repo_sessions(&roots, cwd);
+            if scoped.is_empty() {
+                // Nothing in the cwd's location tree: the freshest anywhere
+                // beats an empty panel (the commander's disconnected live
+                // session is often exactly this).
+                collect_global_sessions(&roots)
+            } else {
+                scoped
+            }
+        }
         None => collect_global_sessions(&roots),
     };
     out.sort_by(|a, b| {
@@ -650,6 +663,24 @@ mod tests {
         let ids: Vec<&str> = got.iter().map(|s| s.session_id.as_str()).collect();
         assert_eq!(ids.len(), 1);
         assert!(ids.contains(&SESSION));
+    }
+
+    #[test]
+    fn drive_level_is_never_probed_and_global_is_the_fallback() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().to_path_buf();
+        // Session in a project unrelated to the pane cwd: the ancestor probe
+        // (which stops above drive level) finds nothing and the global
+        // fallback must surface it.
+        write_session(
+            &root,
+            "D--other-repo",
+            SESSION,
+            b"{\"cwd\":\"D:\\\\other-repo\"}\n",
+        );
+        let got =
+            collect_repo_sessions(std::slice::from_ref(&root), r"C:\Users\zig");
+        assert!(got.is_empty(), "probe must stay inside the cwd tree");
     }
 
     #[test]

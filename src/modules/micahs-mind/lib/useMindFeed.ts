@@ -204,7 +204,13 @@ export function useMindFeed(
 ): MindFeed {
   const [state, setState] = useState<MindFeed>({
     status:
-      pick.session && enabled ? "probing" : pick.session ? "off" : "absent",
+      pick.session && enabled
+        ? "probing"
+        : pick.session
+          ? "off"
+          : cityRoot
+            ? "city"
+            : "absent",
     pick,
     fold: null,
     city: null,
@@ -227,6 +233,9 @@ export function useMindFeed(
       status: "city",
       pick: pickRef.current,
       fold: null,
+      // Drop the previous session's colored city immediately: a stale lit
+      // map under a "cidade sem sessão" badge would be a lie (auditor 4).
+      city: null,
       lateGhosts: new Map(),
       version: s.version + 1,
     }));

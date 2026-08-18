@@ -141,6 +141,35 @@ produziria — ou a leitura das capturas completou padrões, ou vieram de
 instância não-logada. Provas deste card nascem frescas do build novo
 (critério 7).
 
+### Auditoria da implementacao E0-E4 (auditor GLM independente) — 2026-08-18
+
+**Veredito: achados a corrigir — nenhum matou a arquitetura; 1-5+7-8
+corrigidos no commit seguinte, 6 e o cap-300 registrados aqui.** O auditor
+leu o diff completo (2007cbf..9fdb7d8), rodou as suites por conta própria
+(vitest micahs-mind 42/42, cargo claude_session 16/16) e mediu o custo real
+do fallback de drive (13 dirs / 348 jsonl nesta máquina).
+
+| # | Categoria | Achado | Evidencia | Correcao aplicada |
+|---|-----------|--------|-----------|-------------------|
+| 1 | Regressao/anti-farsa | selo "replay" com idade nao existia: sessao morta auto-conectada exibia badge "ao vivo" — criterio 2 nao passava | MindCanvas STATUS_LABEL so por status; WHY_TEXT so no empty state | badge sessionBadge no header do canvas (replay/escolhida + idade via recent) |
+| 2 | Volume/plano | city-only escaneava QUALQUER cwd, inclusive HOME (walk de lixo proibido pela correcao 2 do plano) | MicahsMindArea passava focusedCwd cru | gate de cheiro de repo: fs_read_dir 1o nivel procura .git/package.json/Cargo.toml/go.mod/pyproject/deno/pnpm-workspace; sem marcador nao escaneia |
+| 3 | Concorrencia/UX | overlay "sessões" cobria o botao de replay (mesmo canto top-right) | classes top-2 right-2 z-20 vs z-10 | botao de replay movido para bottom-[64px] right-2 |
+| 4 | Estado | troca sessao→cidade mantinha a cidade COLORIDA da sessao morta sob o selo "cidade sem sessao" ate o scan completar | useMindFeed city-only primeiro setState sem city:null | city:null imediato (painel escuro breve em vez de mapa mentiroso) |
+| 5 | Volume | sonda de ancestral no nivel de drive ("C:") casava TODOS os dirs com verificacao vacua: full-machine scan medido (13 dirs/348 jsonl) | collect_repo_sessions depth 1 | sonda comeca no nivel 2; repo vazio cai no global explicito (+teste drive_level_is_never_probed) |
+| 6 | Entrada suja | ancestral intermediario casa largo entre usuarios (C:\Users casa C--Users-* de outro usuario; verificacao passa pois esta dentro de C:\Users) | munge/extend | REGISTRADO sem correcao: maquina single-user hoje; se multi-perfil importar, parar a sonda no home do usuario |
+| 7 | Estado/UX | selected/replaySeq sobreviviam a troca sessao→cidade (stroke orfao sobre a cidade escura) | MindCanvas efeito com early-return em session null | limpeza em qualquer mudanca de pick.session |
+| 8 | Estado/UX | flicker: primeiro paint publicava "absent" ("sem transcript") por um frame antes do city | useState inicial | estado inicial ja considera cityRoot ("city") |
+| R1 | Volume | list_recent_in_dir trunca 300/dir por NOME (nao recencia): dir com >300 sessoes pode deixar a mais fresca fora | names.sort + truncate | REGISTRADO sem correcao: nenhum dir real passa de 300 nesta maquina; corrigir se um dir real crescer alem do cap |
+
+Hipoteses do executor confirmadas/derrubadas pelo auditor: transitorio do
+estado confirmado (achado 4); loop de effect DERRUBADO (guard forCwd cobre,
+invoke em voo descartado pelo cleanup); ambiguous+auto OK (composePick
+devolve o veredito anchored, seletor resolve com manual); selected/replay
+confirmado (achado 7); custo do drive-root confirmado com numeros (achado
+5); showHidden:false pre-existente para cidades de sessao (limitacao
+registrada, nao deste card); mtime futuro DERRUBADO (clamp em "agora");
+activeLeafId de aba editora DERRUBADO (retorna null, empty state correto).
+
 ## Validacao independente
 
 (pendente)

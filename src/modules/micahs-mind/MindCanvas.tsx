@@ -58,7 +58,14 @@ function makeGlowSprite(color: string): HTMLCanvasElement {
   return c;
 }
 
-export function MindCanvas({ feed }: { feed: MindFeed }) {
+export function MindCanvas({
+  feed,
+  sessionBadge,
+}: {
+  feed: MindFeed;
+  /** Honest provenance for the followed session: replay age or manual pick. */
+  sessionBadge?: { text: string; tone?: "default" | "warn" } | null;
+}) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const cameraRef = useRef<Camera>({ x: -4, z: -4, scale: 8 });
@@ -155,9 +162,10 @@ export function MindCanvas({ feed }: { feed: MindFeed }) {
     pulseUntilRef.current = Date.now() + 1400;
   }, [feed.version]);
 
-  // Switching sessions clears the replay cursor and the pinned file.
+  // Switching sessions (or dropping to the session-less city) clears the
+  // replay cursor and the pinned file; a selection stroke surviving into the
+  // dark city would be an orphan (auditor 7).
   useEffect(() => {
-    if (feed.pick.session === null) return;
     setSelected(null);
     setReplaySeq(null);
     dirtyRef.current = true;
@@ -431,6 +439,9 @@ export function MindCanvas({ feed }: { feed: MindFeed }) {
           {STATUS_LABEL[feed.status]?.text ?? feed.status}
         </Badge>
         {fold ? <Badge>{fold.session.id.slice(0, 8)}</Badge> : null}
+        {sessionBadge ? (
+          <Badge tone={sessionBadge.tone}>{sessionBadge.text}</Badge>
+        ) : null}
         {stats ? <Badge>{fold?.events.length ?? 0} eventos</Badge> : null}
         {stats ? <Badge>{stats.edited} editados</Badge> : null}
         {stats ? <Badge>{stats.fovea} lidos</Badge> : null}
@@ -445,7 +456,7 @@ export function MindCanvas({ feed }: { feed: MindFeed }) {
         <button
           type="button"
           onClick={() => setReplaySeq(null)}
-          className="absolute top-2 right-2 z-10 rounded border border-amber-500/40 bg-amber-500/10 px-2 py-1 text-[10px] text-amber-300"
+          className="absolute bottom-[64px] right-2 z-10 rounded border border-amber-500/40 bg-amber-500/10 px-2 py-1 text-[10px] text-amber-300"
         >
           replay até #{replaySeq} · seguir ao vivo
         </button>
