@@ -7,11 +7,21 @@
 
 import { describe, expect, it } from "vitest";
 import {
+  absentStatus,
   composePick,
   mapScanFiles,
   touchedTopDirs,
   type MindSessionPick,
 } from "./useMindFeed";
+
+describe("absentStatus (critério 4: nunca branco)", () => {
+  it("a synced session whose transcript vanished is missing, not absent", () => {
+    expect(absentStatus(true)).toBe("missing");
+  });
+  it("a session never seen is just absent", () => {
+    expect(absentStatus(false)).toBe("absent");
+  });
+});
 
 describe("composePick (âncora > manual > auto)", () => {
   const anchored: MindSessionPick = { session: "aaa", why: "focused-leaf" };

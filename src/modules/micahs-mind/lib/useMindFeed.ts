@@ -111,6 +111,15 @@ export function composePick(
   return anchored;
 }
 
+/**
+ * Transcript not found mid-feed: a session that ALREADY synced keeps its
+ * city and fold on screen as "missing" (the transcript went away — badge
+ * tells the truth, map stays); a session never seen is just "absent".
+ */
+export function absentStatus(synced: boolean): "missing" | "absent" {
+  return synced ? "missing" : "absent";
+}
+
 function dropLeadingPartialLine(chunk: string): string {
   const nl = chunk.indexOf("\n");
   return nl === -1 ? "" : chunk.slice(nl + 1);
@@ -334,7 +343,7 @@ export function useMindFeed(
           delay = ABSENT_POLL_MS;
           // Transcript vanished mid-flight: the synced city and fold stay on
           // screen, only the badge tells the truth (auditor correction 8).
-          publish(synced ? "missing" : "absent");
+          publish(absentStatus(synced));
         } else {
           if (tail.next_offset < offset) {
             // File shrank or was replaced: refold from zero or the trace
@@ -378,7 +387,7 @@ export function useMindFeed(
       } catch {
         if (!alive) return;
         delay = ABSENT_POLL_MS;
-        publish(synced ? "missing" : "absent");
+        publish(absentStatus(synced));
       }
       if (alive) timer = setTimeout(() => void tick(), delay);
     };
