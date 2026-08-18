@@ -378,6 +378,11 @@ pub async fn claude_sessions_recent(
         Some(cwd) => collect_repo_sessions(&roots, cwd),
         None => collect_global_sessions(&roots),
     };
+    log::info!(
+        "claude_sessions_recent cwd={:?} -> {} sessions",
+        cwd,
+        out.len()
+    );
     out.sort_by(|a, b| {
         b.mtime_ms
             .cmp(&a.mtime_ms)
