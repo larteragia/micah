@@ -131,6 +131,27 @@ verificacao:
     reportando sucesso.
 
 rondas_pdi:
+  - card: micahs-mind-shell-integration-raiz-2026-08-18
+    titulo: "Raiz do shell-integration do PTY (P1-P3 do plano do comandante): -File nunca executou"
+    data: 2026-08-19T10:10:00-03:00
+    resultado: "done — raiz caçada e morta: o spawn do app carrega -File no argv (provado por CIM do processo vivo) mas o script NUNCA executa sob ConPTY (atributo PseudoConsole + STARTF_USESTDHANDLES com handles invalidos do portable-pty 0.9); fix de uma mudança: -Command dot-source, com regressão que proíbe o -File de voltar; provas 1-3 na pane real (HOOKS True, claude True, cd move o painel) e gate do comandante confirmado ao vivo (o mapa seguiu a sessão dele)"
+    prova:
+      artefato: "micah build c40ed2f-dirty (= commit do fix; -dirty pelos 3 arquivos de estilo de terceiro preservados)"
+      verificado_em: "src-tauri/target/release/micah.exe em execução, stdout capturado"
+      saida: "[2026-08-19][02:15:53][micah_lib][INFO] micah build c40ed2f-dirty + provas 90-proof-hooks.png (True/True na pane) e 91-proof-cd-follows.png (painel seguiu o cd) + print do comandante confirmando ao vivo"
+    achados:
+      - categoria: "Regressão"
+        etapa: E4
+        evidencia: "powershell -File silenciosamente não executa sob o spawn ConPTY (argv presente no PEB, script morto): standalone True/True vs in-pane False com argv idêntico — diferença nomeada: STARTUPINFOEXW + PseudoConsole + handles invalidos (psuedocon.rs:112-153); fix -Command dot-source em c40ed2f"
+      - categoria: "Instrumentação"
+        etapa: E2
+        evidencia: "instrumentar o profile em ~/.cache é inútil: o write_if_changed do app reescreve o arquivo a cada spawn, apagando a instrumentação antes de rodar (falso teste negativo registrado); a prova válida é medição in-pane com profile pristino + CIM do processo vivo (zero rebuild)"
+      - categoria: "Concorrência"
+        etapa: E1
+        evidencia: "diagnóstico por UI dirigida (window-type em pane) corrói o próprio instrumento: aspas tripla-camada geraram erro falso de 'Test-Path não reconhecido' e prompt de continuação preso; prova por arquivo (wrapper com self-capture) é o caminho confiável"
+      - categoria: "Rollback"
+        etapa: E0
+        evidencia: "congelamento P0 honrado: tag cea6691-dirty + patch do HOME-city fora do tree (Desktop), único diff do card = shell_init.rs (+46/-2), zero linha de mapa/E7/UX"
   - card: micahs-mind-sempre-visivel-2026-08-18
     titulo: "Micah's Mind sempre visível: cidade sem sessão, auto-conexão e seletor"
     data: 2026-08-18T15:30:00-03:00
