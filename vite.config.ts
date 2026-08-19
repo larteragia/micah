@@ -1,4 +1,6 @@
+/// <reference types="vitest/config" />
 import babel from "@rolldown/plugin-babel";
+import { defaultExclude } from "vitest/config";
 import tailwindcss from "@tailwindcss/vite";
 import react, { reactCompilerPreset } from "@vitejs/plugin-react";
 import path from "node:path";
@@ -139,6 +141,13 @@ export default defineConfig(async ({ mode }): Promise<UserConfig> => ({
         },
       },
     },
+  },
+  test: {
+    // src-tauri/target holds build caches, including the mindwalk fork clone
+    // (scripts/mindwalk/build-mindwalk.mjs) whose web/e2e Playwright specs
+    // the default glob would sweep into the frontend suite. Extending the
+    // defaults (not replacing them) keeps .git and friends excluded too.
+    exclude: [...defaultExclude, "**/dist/**", "src-tauri/**"],
   },
   clearScreen: false,
   server: {

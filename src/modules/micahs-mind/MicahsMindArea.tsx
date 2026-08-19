@@ -1,37 +1,32 @@
 /**
- * Micah's Mind scene: the repository as a night city of luminous dots the
- * agent touched, navigable with mouse or touch, following the Claude
- * session of the focused pane in real time. Canvas 2D only: no new
- * dependency (LEI ZERO) and no WebGL context (renderer pool stays at 5).
+ * Micah's Mind (modo ai-viewer): the REAL mindwalk UI — rail of sessions,
+ * night map, timeline — served by the local sidecar and shown in a native
+ * child webview positioned over this panel (card mindwalk-real, E4). The
+ * homemade Canvas 2D renderer is gone from this path (files die in E5).
  *
- * The map is always visible (card sempre-visivel): a pane with no anchored
- * session still draws its repository city (dark, untouched), and an
- * auto-connect picks the freshest session whose transcript cwd sits inside
- * the pane's location. Priority is fixed: a real anchor beats a manual
- * choice, a manual choice beats the auto-connect.
+ * What stays is the session plumbing, now the webview's remote control:
+ * the Ativar gate, the auto-connect for anchorless panes, the manual
+ * session selector and the provenance badges. Priority is unchanged: a
+ * real anchor beats a manual choice, a manual choice beats auto-connect.
+ *
+ * Layout note: the native webview paints above ALL HTML and ignores
+ * z-index, so the chrome (badges + selector) lives in a header strip
+ * OUTSIDE the webview's rectangle, and the selector dropdown hides the
+ * webview while open (suppression inside useMindView).
  */
 
-import { LeftPanelEmpty } from "@/modules/left-panel/LeftPanelEmpty";
 import {
   readAiViewerActive,
   writeAiViewerActive,
 } from "@/modules/left-panel/lib/activation";
 import { invoke } from "@tauri-apps/api/core";
-import { lazy, Suspense, useEffect, useMemo, useState } from "react";
-import {
-  attachPaneSession,
-  freezePaneCity,
-} from "./lib/paneAnchor";
+import { useEffect, useMemo, useState } from "react";
 import {
   type MindSessionPick,
   composePick,
   pickMindSession,
-  useMindFeed,
 } from "./lib/useMindFeed";
-
-const MindCanvas = lazy(() =>
-  import("./MindCanvas").then((m) => ({ default: m.MindCanvas })),
-);
+import { useMindView } from "./lib/useMindView";
 
 export type AnchoredLeaf = { leafId: number; resume: string };
 
@@ -58,6 +53,33 @@ function ageLabel(mtimeMs: number): string {
   return `há ${Math.floor(s / 86400)} d`;
 }
 
+/**
+ * Elapsed seconds since `startedAt`, for the honest handshake spinner.
+ * A 1s UI clock, not a data refresh: live-follow belongs to the fork's
+ * own UI (?follow=1, plan decision 9).
+ */
+function useElapsedSeconds(startedAt: number | null): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (startedAt === null) return;
+    setNow(Date.now());
+    const id = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(id);
+  }, [startedAt]);
+  return startedAt === null
+    ? 0
+    : Math.max(0, Math.floor((now - startedAt) / 1000));
+}
+
+function Spinner() {
+  return (
+    <div
+      aria-hidden
+      className="size-4 animate-spin rounded-full border-2 border-slate-600 border-t-slate-200"
+    />
+  );
+}
+
 export function MicahsMindArea({
   resolveLeafResume,
   resolveLeafCwd,
@@ -75,9 +97,10 @@ export function MicahsMindArea({
   /** Manual picker choice; lives in memory, dies with the pane focus. */
   const [manualSession, setManualSession] = useState<string | null>(null);
   /** Auto-connect result, once per focused cwd (never over a choice). */
-  const [auto, setAuto] = useState<{ session: string | null; forCwd: string } | null>(
-    null,
-  );
+  const [auto, setAuto] = useState<{
+    session: string | null;
+    forCwd: string;
+  } | null>(null);
   const [recent, setRecent] = useState<RecentSession[]>([]);
   const [listOpen, setListOpen] = useState(false);
 
@@ -97,9 +120,9 @@ export function MicahsMindArea({
       ? resolveLeafCwd(activeLeafId)
       : null;
 
-  // Repo smell gate (auditor 2): the dark city only scans a cwd that looks
-  // like a project root; scanning an arbitrary folder (the user's home, a
-  // drive) would walk garbage for nothing.
+  // Repo smell gate (auditor 2): the auto-connect only scopes to a cwd
+  // that looks like a project root; an arbitrary folder (the user's home,
+  // a drive) goes global instead of pretending to be a project.
   const [scannable, setScannable] = useState<boolean | null>(null);
   useEffect(() => {
     if (!focusedCwd) {
@@ -167,9 +190,9 @@ export function MicahsMindArea({
           limit: 5,
         });
         if (!alive) return;
-        // A repo with no sessions of its own keeps its honest dark city and
-        // no auto-connect, but the picker still offers the freshest
-        // sessions anywhere: one click connects instead of an empty panel.
+        // A repo with no sessions of its own gets no auto-connect, but the
+        // picker still offers the freshest sessions anywhere: one click
+        // connects instead of an empty panel.
         if (res.length === 0 && scannable) {
           const globalRes = await invoke<RecentSession[]>(
             "claude_sessions_recent",
@@ -192,26 +215,21 @@ export function MicahsMindArea({
     return () => {
       alive = false;
     };
-  }, [autoKey, focusedCwd, scannable, manualSession, anchoredPick.session, auto?.forCwd]);
+  }, [
+    autoKey,
+    focusedCwd,
+    scannable,
+    manualSession,
+    anchoredPick.session,
+    auto?.forCwd,
+  ]);
 
-  const feed = useMindFeed(pick, active, scannable ? focusedCwd : null);
-
-  // P4: the pane IS the identity — record what it follows and keep the
-  // frozen city on record when a transcript dies under it.
-  useEffect(() => {
-    if (activeLeafId == null || !pick.session) return;
-    attachPaneSession(activeLeafId, pick.session);
-  }, [activeLeafId, pick.session]);
-  useEffect(() => {
-    if (activeLeafId == null || feed.status !== "missing" || !pick.session)
-      return;
-    freezePaneCity(
-      activeLeafId,
-      pick.session,
-      feed.city?.files.length ?? 0,
-      feed.fold?.events.length ?? 0,
-    );
-  }, [activeLeafId, feed.status, feed.city, feed.fold, pick.session]);
+  const view = useMindView({
+    enabled: active,
+    session: pick.session,
+    menuOpen: listOpen,
+  });
+  const waitedS = useElapsedSeconds(view.waitStartedAt);
 
   // Provenance badge: a replayed session must never read as "ao vivo"
   // (auditor 1, criterion 2).
@@ -226,6 +244,27 @@ export function MicahsMindArea({
     return { text: `replay${age}` };
   }, [pick, recent]);
 
+  // Discreet sidecar badge whenever the webview is not the thing on screen.
+  const sidecarBadge = useMemo(() => {
+    const restarts = view.status?.restarts ?? 0;
+    const suffix = restarts > 0 ? ` · religado ×${restarts}` : "";
+    // A failed attach must not read as "varrendo…" forever: the center
+    // screen explains, the badge agrees.
+    if (view.attachError) return `webview falhou${suffix}`;
+    switch (view.phase) {
+      case "sidecar-starting":
+        return `mindwalk subindo…${suffix}`;
+      case "session-waiting":
+        return `varrendo… ${waitedS}s${suffix}`;
+      case "dead":
+        return `mindwalk morto${suffix}`;
+      case "session-absent":
+        return "sem sessão";
+      default:
+        return null;
+    }
+  }, [view.phase, view.status, view.attachError, waitedS]);
+
   const setActivePersisted = (next: boolean) => {
     writeAiViewerActive(next);
     setActive(next);
@@ -239,9 +278,9 @@ export function MicahsMindArea({
             Micah&apos;s Mind desligado
           </p>
           <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-            Ativar conecta ao transcript da sessão Claude Code da pane em foco e
-            desenha o rastro da AI no repositório: onde passou, o que leu, o que
-            editou. Somente leitura.
+            Ativar sobe o mindwalk local e conecta à sessão Claude Code da pane
+            em foco: o mapa noturno do repositório, o rail de sessões e a
+            timeline reais, seguindo a AI ao vivo. Somente leitura.
           </p>
         </div>
         <button
@@ -255,57 +294,135 @@ export function MicahsMindArea({
     );
   }
 
-  // No session AND no honest city to draw (no pane cwd, or the cwd is not a
-  // project root): nothing to show but the reason.
-  if (!pick.session && (!focusedCwd || scannable === false)) {
-    return (
-      <LeftPanelEmpty
-        title="Nenhuma sessão para seguir"
-        hint={
-          focusedCwd
-            ? "pasta atual não é um projeto e não há sessão recente para conectar"
-            : WHY_TEXT[pick.why]
-        }
-      />
-    );
-  }
+  // The session the plumbing picked exists but is not a uuid: the webview
+  // must never be navigated to it (plan decision 3) — say so.
+  const invalidPick = pick.session !== null && view.session === null;
 
   return (
-    <div className="relative flex h-full min-h-0 flex-col bg-[#07090f]">
-      <Suspense fallback={<div className="flex-1" />}>
-        <MindCanvas feed={feed} sessionBadge={sessionBadge} />
-      </Suspense>
-      <div className="absolute top-2 right-2 z-20 flex flex-col items-end gap-1">
-        <button
-          type="button"
-          onClick={() => setListOpen((v) => !v)}
-          className="rounded border border-slate-700/60 bg-slate-900/80 px-2 py-1 text-[10px] text-slate-300 hover:bg-slate-800"
-        >
-          sessões{recent.length > 0 ? ` (${recent.length})` : ""}
-        </button>
-        {listOpen ? (
-          <div className="max-h-[45%] w-[240px] overflow-y-auto rounded border border-slate-700/60 bg-slate-950/95 p-1 text-[10px] text-slate-300 shadow">
-            {recent.length === 0 ? (
-              <p className="px-2 py-1 text-slate-500">
-                nenhuma sessão recente neste local
-              </p>
-            ) : (
-              recent.map((r) => (
+    <div className="flex h-full min-h-0 flex-col bg-[#07090f]">
+      {/* Chrome strip OUTSIDE the webview rect: always visible, always
+          clickable, whatever the native layer is doing below. */}
+      <div className="relative z-10 flex h-8 shrink-0 items-center gap-2 border-b border-slate-800/60 px-2">
+        {sessionBadge ? (
+          <span className="rounded bg-slate-800/80 px-1.5 py-0.5 text-[10px] text-amber-300/90">
+            {sessionBadge.text}
+          </span>
+        ) : null}
+        {sidecarBadge ? (
+          <span className="rounded bg-slate-800/60 px-1.5 py-0.5 text-[10px] text-slate-400">
+            {sidecarBadge}
+          </span>
+        ) : null}
+        <div className="relative ml-auto">
+          <button
+            type="button"
+            onClick={() => setListOpen((v) => !v)}
+            className="rounded border border-slate-700/60 bg-slate-900/80 px-2 py-1 text-[10px] text-slate-300 hover:bg-slate-800"
+          >
+            sessões{recent.length > 0 ? ` (${recent.length})` : ""}
+          </button>
+          {listOpen ? (
+            <div className="absolute top-full right-0 z-20 mt-1 max-h-[45vh] w-[240px] overflow-y-auto rounded border border-slate-700/60 bg-slate-950/95 p-1 text-[10px] text-slate-300 shadow">
+              {recent.length === 0 ? (
+                <p className="px-2 py-1 text-slate-500">
+                  nenhuma sessão recente neste local
+                </p>
+              ) : (
+                recent.map((r) => (
+                  <button
+                    key={r.session_id}
+                    type="button"
+                    onClick={() => {
+                      setManualSession(r.session_id);
+                      setListOpen(false);
+                    }}
+                    className={`block w-full truncate rounded px-2 py-1 text-left hover:bg-slate-800 ${
+                      r.session_id === pick.session ? "text-emerald-400" : ""
+                    }`}
+                  >
+                    {r.session_id.slice(0, 8)} · {ageLabel(r.mtime_ms)}
+                  </button>
+                ))
+              )}
+            </div>
+          ) : null}
+        </div>
+      </div>
+      <div className="relative min-h-0 flex-1">
+        {/* The native mindwalk webview covers exactly this div when the
+            machine reaches "ready"; every other phase keeps it hidden so
+            the state UI below is really what the user sees. */}
+        <div ref={view.hostRef} className="absolute inset-0" />
+        {view.phase !== "ready" ? (
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 px-6 text-center">
+            {view.phase === "sidecar-starting" ? (
+              <>
+                <Spinner />
+                <p className="text-xs text-slate-400">subindo o mindwalk…</p>
+              </>
+            ) : null}
+            {view.phase === "session-waiting" ? (
+              view.attachError ? (
+                <>
+                  <p className="text-xs text-amber-300/90">
+                    o mindwalk respondeu, mas o webview não abriu
+                  </p>
+                  <p className="max-w-[36ch] break-words text-[10px] text-slate-500">
+                    {view.attachError}
+                  </p>
+                  <button
+                    type="button"
+                    onClick={view.relight}
+                    className="rounded border border-slate-700/60 bg-slate-900/80 px-2 py-1 text-[10px] text-slate-300 hover:bg-slate-800"
+                  >
+                    Tentar de novo
+                  </button>
+                </>
+              ) : (
+                <>
+                  <Spinner />
+                  <p className="text-xs text-slate-400">
+                    varrendo a sessão… {waitedS}s
+                  </p>
+                  <p className="max-w-[40ch] text-[10px] leading-relaxed text-slate-500">
+                    sem barra de progresso porque não existe uma honesta: a
+                    primeira varredura de um diretório grande pode levar
+                    minutos; as próximas são instantâneas
+                  </p>
+                </>
+              )
+            ) : null}
+            {view.phase === "session-absent" ? (
+              <>
+                <p className="text-xs font-medium text-slate-300">
+                  Nenhuma sessão para seguir
+                </p>
+                <p className="max-w-[40ch] text-[10px] leading-relaxed text-slate-500">
+                  {invalidPick
+                    ? "a sessão apontada não tem um id uuid válido"
+                    : WHY_TEXT[pick.why]}
+                </p>
+              </>
+            ) : null}
+            {view.phase === "dead" ? (
+              <>
+                <p className="text-xs font-medium text-amber-300/90">
+                  o mindwalk caiu
+                </p>
+                {view.status?.lastError ? (
+                  <p className="max-w-[40ch] break-words text-[10px] leading-relaxed text-slate-500">
+                    {view.status.lastError}
+                  </p>
+                ) : null}
                 <button
-                  key={r.session_id}
                   type="button"
-                  onClick={() => {
-                    setManualSession(r.session_id);
-                    setListOpen(false);
-                  }}
-                  className={`block w-full truncate rounded px-2 py-1 text-left hover:bg-slate-800 ${
-                    r.session_id === pick.session ? "text-emerald-400" : ""
-                  }`}
+                  onClick={view.relight}
+                  className="rounded border border-slate-700/60 bg-slate-900/80 px-2 py-1 text-[10px] text-slate-300 hover:bg-slate-800"
                 >
-                  {r.session_id.slice(0, 8)} · {ageLabel(r.mtime_ms)}
+                  Religar
                 </button>
-              ))
-            )}
+              </>
+            ) : null}
           </div>
         ) : null}
       </div>

@@ -1,1 +1,1 @@
-export { type AnchoredLeaf, MicahsMindArea } from "./MicahsMindArea";
+export { MicahsMindArea } from "./MicahsMindArea";
