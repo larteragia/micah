@@ -115,8 +115,9 @@ fn tail_file(path: &Path, offset: Option<u64>) -> Result<SessionTail, String> {
 /// Transcript roots to probe, in order. The default CLI writes to
 /// ~/.claude/projects; wrapper configs (the micah alias sets
 /// CLAUDE_CONFIG_DIR to ~/.claude-micah) write their own tree, and the mind
-/// must follow sessions launched either way on the same machine.
-fn transcript_roots(home: &Path) -> Vec<PathBuf> {
+/// must follow sessions launched either way on the same machine. Shared with
+/// the mind module so the mindwalk sidecar watches these exact roots.
+pub(crate) fn transcript_roots(home: &Path) -> Vec<PathBuf> {
     vec![
         home.join(".claude").join("projects"),
         home.join(".claude-micah").join("projects"),

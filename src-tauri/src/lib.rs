@@ -1,7 +1,7 @@
 pub mod modules;
 
 use modules::{
-    agent, browser, control, fs, git, history, lsp, net, pty, secrets, shell, workspace,
+    agent, browser, control, fs, git, history, lsp, mind, net, pty, secrets, shell, workspace,
 };
 use std::path::PathBuf;
 use std::sync::Mutex;
@@ -288,6 +288,7 @@ pub fn run() {
         })
         .manage(pty::PtyState::default())
         .manage(browser::BrowserState::default())
+        .manage(mind::MindState::default())
         .manage(control_state)
         .manage(shell::ShellState::default())
         .manage(secrets::SecretsState::default())
@@ -408,11 +409,28 @@ pub fn run() {
             browser::commands::browser_extension_remove,
             browser::commands::browser_clear_data,
             browser::browser_build_id,
+            mind::commands::mind_status,
+            mind::commands::mind_ensure,
+            mind::commands::mind_prewarm,
+            mind::commands::mind_wait_session,
+            mind::commands::mind_attach,
+            mind::commands::mind_navigate,
+            mind::commands::mind_set_bounds,
+            mind::commands::mind_set_visible,
+            mind::commands::mind_detach,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app, event| {
             match event {
+                // First shot at the mindwalk sidecar. Exit fires afterwards and
+                // the kill is idempotent, but a slow teardown path must not
+                // leave the server running unsupervised in the meantime.
+                tauri::RunEvent::ExitRequested { .. } => {
+                    if let Some(state) = app.try_state::<mind::MindState>() {
+                        mind::shutdown(&state);
+                    }
+                }
                 // Servers exit on stdin EOF, but destructors are not guaranteed
                 // on process exit; kill explicitly.
                 tauri::RunEvent::Exit => {
@@ -421,6 +439,9 @@ pub fn run() {
                     }
                     if let Some(state) = app.try_state::<control::ControlState>() {
                         state.shutdown();
+                    }
+                    if let Some(state) = app.try_state::<mind::MindState>() {
+                        mind::shutdown(&state);
                     }
                     // A discovery file that outlives the process points at a port
                     // the OS may hand to something else — an agent reading it
@@ -450,6 +471,11 @@ pub fn run() {
                         if browser::forget_window(&state, &label) {
                             log::info!("window {label} closed: released the browser panel");
                             browser::clear_discovery(app);
+                        }
+                    }
+                    if let Some(state) = app.try_state::<mind::MindState>() {
+                        if mind::forget_window(&state, &label) {
+                            log::info!("window {label} closed: released the mind panel");
                         }
                     }
                 }
