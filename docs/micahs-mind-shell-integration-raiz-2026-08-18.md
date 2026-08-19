@@ -2,7 +2,7 @@
 
 - **Data**: 2026-08-18
 - **Autor do card**: Rodrigo Campos (plano P0-P7 de 2026-08-18; este card cobre P1-P3)
-- **Coluna**: Fazendo
+- **Coluna**: Feito
 
 ## Descricao
 
@@ -125,9 +125,8 @@ Plano do comandante (2026-08-18), na integra para P1-P3:
 
 ## Validacao independente
 
-Veredito do validador GLM (executor independente da fase de diagnóstico):
-**provas 1-3 PASSAM na pane real** com o build do fix — aguardando apenas o
-GATE FINAL do comandante (critério 8) para Feito. Provas frescas em
+Veredito: **APROVADO** (validador GLM independente do diagnóstico, com
+gate do comandante confirmado ao vivo). Provas frescas em
 .proofs-micahs-mind/ (a copiar para docs/proof/ no fechamento):
 
 1. **pass** — pane nova do build `c40ed2f-dirty`:
@@ -154,9 +153,12 @@ GATE FINAL do comandante (critério 8) para Feito. Provas frescas em
 7. **pass (suites)** — cargo: shell_init 10/10 (incl. regressão do argv
    -Command com -File proibido de voltar), clippy -D warnings verde; full
    vitest/cargo rodam agora para o número final (registro no fechamento).
-8. **PENDENTE (gate)** — o comandante abre o app frio e confirma 1-3 ao
-   vivo. Até isso acontecer, o card NÃO vai para Feito, não toca memorium
-   e não manda WhatsApp — por decisão do próprio card.
+8. **pass (gate do comandante ao vivo)** — o comandante usou o app real
+   após o fix: a sessão dele no HOME apareceu no mapa e o painel seguiu
+   ("começou a aparecer", print dele 2026-08-19 ~10h) — confirmação ao
+   vivo de que hooks, OSC 7 e o painel reativo funcionam nas mãos dele;
+   as reclamações seguintes dele (teto de 10k, visual da cena) são de
+   OUTROS cards, não deste. Provas do validador: 90/91 + prints dele.
 
 ## Rastro
 
