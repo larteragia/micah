@@ -571,8 +571,16 @@ mod windows {
                     cmd.arg("-NoExit");
                     cmd.arg("-ExecutionPolicy");
                     cmd.arg("Bypass");
-                    cmd.arg("-File");
-                    cmd.arg(profile);
+                    // NOT -File: under this spawn path (ConPTY attribute +
+                    // STARTF_USESTDHANDLES with invalid handles, portable-pty
+                    // 0.9 psuedocon.rs) the argv carries -File but the script
+                    // NEVER executes — silent, proven by an unconditional
+                    // first-line log in the deployed profile (card
+                    // micahs-mind-shell-integration-raiz-2026-08-18). The
+                    // dot-source via -Command runs in every context tested
+                    // (pipe, real console, app-pane child).
+                    cmd.arg("-Command");
+                    cmd.arg(format!(". '{}'", profile.display()));
                 }
                 Err(e) => {
                     log::warn!("powershell shell integration disabled: {e}");
@@ -1052,6 +1060,42 @@ mod windows {
                     "--exec".to_string(),
                     "/usr/bin/nu".to_string(),
                 ]
+            );
+        }
+
+        #[test]
+        fn powershell_spawn_dot_sources_profile_via_command_never_file() {
+            // Regression guard of card micahs-mind-shell-integration-raiz:
+            // -File never executes under this spawn path (argv carries it,
+            // script silently doesn't run); the profile must load via a
+            // -Command dot-source instead.
+            let cmd = super::build(
+                None,
+                crate::modules::workspace::WorkspaceEnv::Local,
+                false,
+                None,
+                None,
+            )
+            .expect("build");
+            let argv: Vec<String> = cmd
+                .get_argv()
+                .iter()
+                .map(|a| a.to_string_lossy().into_owned())
+                .collect();
+            let joined = argv.join(" ");
+            assert!(joined.contains("-NoExit"), "interactive: {joined}");
+            assert!(joined.contains("-ExecutionPolicy Bypass"), "{joined}");
+            assert!(
+                joined.contains("-Command"),
+                "profile loads via -Command: {joined}"
+            );
+            assert!(
+                joined.contains(". '"),
+                "dot-source of the profile path: {joined}"
+            );
+            assert!(
+                !joined.contains(" -File"),
+                "-File must never come back (silent no-op under this spawn): {joined}"
             );
         }
     }
