@@ -53,7 +53,9 @@ pub use stub as commands;
 const WEBVIEW_LABEL: &str = "browser";
 
 /// Folder under the app data dir holding the panel's Chromium profile. Distinct
-/// from the app's own `EBWebView`, on purpose (see module docs).
+/// from the app's own `EBWebView`, on purpose (see module docs). Consumed only
+/// by the Windows attach path (the profile pairs with additional_browser_args).
+#[cfg(windows)]
 const PROFILE_DIR: &str = "browser-profile";
 
 /// Discovery file the agent side reads to find the CDP port.

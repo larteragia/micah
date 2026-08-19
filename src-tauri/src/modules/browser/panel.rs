@@ -20,9 +20,15 @@ const MIN_WINDOW_WIDTH_PLAIN: f64 = 420.0;
 use super::{
     clear_discovery, discovery_path, normalize_url, now_millis, Attached, BrowserInfo,
     BrowserState, CdpInfo, BLANK, CDP_FALLBACK_TIMEOUT, CDP_PROBE_INTERVAL, CDP_PROBE_TIMEOUT,
-    PROFILE_DIR, WEBVIEW_LABEL,
+    WEBVIEW_LABEL,
 };
+#[cfg(windows)]
+use super::PROFILE_DIR;
 
+// Only the Windows attach path (additional_browser_args + data_directory)
+// consumes these; on other platforms they are dead code, and -D warnings on
+// the Linux CI leg turns that into a build error.
+#[cfg(windows)]
 fn profile_dir<R: Runtime>(app: &tauri::AppHandle<R>) -> Result<PathBuf, String> {
     let base = app
         .path()
@@ -36,6 +42,7 @@ fn profile_dir<R: Runtime>(app: &tauri::AppHandle<R>) -> Result<PathBuf, String>
 /// Grab a port the OS says is free. Classic TOCTOU — something else can take it
 /// between the drop and WebView2's bind — which is why nothing is written to the
 /// discovery file until the port has actually answered (see `probe_cdp`).
+#[cfg(windows)]
 fn pick_free_port() -> Result<u16, String> {
     let listener = std::net::TcpListener::bind("127.0.0.1:0")
         .map_err(|e| format!("could not reserve a debugging port: {e}"))?;
@@ -111,6 +118,7 @@ fn write_discovery<R: Runtime>(app: &tauri::AppHandle<R>, info: &CdpInfo) -> Res
 /// `--remote-allow-origins` is deliberately absent. It only relaxes the `Origin`
 /// check on the CDP WebSocket handshake, Playwright doesn't send that header, and
 /// `*` would let any web page on the machine seize the panel.
+#[cfg(windows)]
 #[cfg(windows)]
 fn browser_args(port: u16) -> String {
     format!("--disable-features=msWebOOUI,msPdfOOUI --remote-debugging-port={port}")
