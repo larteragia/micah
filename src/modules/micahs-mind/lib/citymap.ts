@@ -42,7 +42,11 @@ export type CityMap = {
   layout: { algorithm: string; weight: string };
 };
 
-export const MAX_MAP_FILES = 10000;
+/** Commander's order (2026-08-18): the "mapa truncado" ceiling is gone.
+ * This is now a runaway backstop, not a user-facing cap: a map that reaches
+ * it was already impossible to read. HOME-rooted sessions never scan the
+ * whole profile (they map touched dirs only), so nothing real gets close. */
+export const MAX_MAP_FILES = 250_000;
 
 export type CityEntry = {
   /** Repo-relative slash path. */

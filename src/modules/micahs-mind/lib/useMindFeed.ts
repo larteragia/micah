@@ -34,8 +34,9 @@ type SessionTail = {
 const POLL_MS = 700;
 const CATCHUP_MS = 60;
 const ABSENT_POLL_MS = 3000;
-/** Hard ceiling per fs_list_files call, matching the Rust hard limit. */
-const SCAN_LIMIT = 10_000;
+/** Per-call scan ceiling — runaway backstop only (commander's order: the
+ * user-facing 10k cap and its "mapa truncado" badge are gone). */
+const SCAN_LIMIT = 100_000;
 /** A workspace-looking root (many touched top dirs) maps only those dirs. */
 const WORKSPACE_TOPDIR_THRESHOLD = 6;
 const MAX_SCAN_ROOTS = 8;
@@ -301,16 +302,23 @@ export function useMindFeed(
     const ensureCity = async (): Promise<void> => {
       if (city || !fold.session.cwd) return;
       const root = fold.session.cwd;
+      const rootNorm = normalizeSlashes(root).replace(/\/+$/, "");
+      // A session launched at the user profile (HOME) has no project root:
+      // mapping the whole HOME is a 10k-file junk walk that always truncates.
+      // Map only the top dirs the session actually touched instead, and only
+      // once there is one — ensureCity retries on every transcript batch
+      // until then, so the frozen city is never an empty shell.
+      const isHomeRoot = deriveHome(root) === rootNorm;
       const touchedRels = [...fold.touched.keys()]
         .map((p) => cleanRel(p))
         .filter(Boolean);
       const tops = touchedTopDirs(touchedRels);
-      const subDirs =
-        tops.length > WORKSPACE_TOPDIR_THRESHOLD
-          ? tops.map(
-              (t) => `${normalizeSlashes(root).replace(/\/+$/, "")}/${t}`,
-            )
+      if (isHomeRoot && tops.length === 0) return;
+      const useTops =
+        isHomeRoot || tops.length > WORKSPACE_TOPDIR_THRESHOLD
+          ? tops.map((t) => `${rootNorm}/${t}`)
           : null;
+      const subDirs = useTops !== null && useTops.length > 0 ? useTops : null;
       const entries = await scanEntries(root, subDirs);
       if (subDirs === null && entries && entries.length > 0) {
         scannedRel = new Set(entries.map((e) => e.rel));

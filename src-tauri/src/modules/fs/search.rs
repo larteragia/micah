@@ -26,8 +26,10 @@ pub struct SearchResult {
 
 /// Hard cap on entries the walker is allowed to visit before bailing. Protects
 /// against pathological roots like $HOME where there's no .gitignore and the
-/// tree is effectively unbounded.
-const MAX_SCANNED: usize = 50_000;
+/// tree is effectively unbounded. Raised from 50k to 300k by commander's
+/// order (2026-08-18): the user-facing "mapa truncado" ceiling is gone; this
+/// is now only a runaway backstop.
+const MAX_SCANNED: usize = 300_000;
 
 /// Directory names pruned unconditionally — they're rarely useful in a
 /// file-explorer search and they dominate scan time when present.
