@@ -4,6 +4,7 @@ import { lintGutter } from "@codemirror/lint";
 import { search } from "@codemirror/search";
 import { Compartment, EditorState, type Extension } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
+import { showMinimap } from "@replit/codemirror-minimap";
 import { chromeTheme } from "./chromeTheme";
 
 // Compartments allow runtime reconfiguration without rebuilding state.
@@ -13,6 +14,16 @@ export const wrapCompartment = new Compartment();
 export const vimCompartment = new Compartment();
 export const lspCompartment = new Compartment();
 export const indentCompartment = new Compartment();
+export const minimapCompartment = new Compartment();
+
+export function minimapExtension(enabled: boolean): Extension {
+  if (!enabled) return [];
+  return showMinimap.of({
+    create: () => ({ dom: document.createElement("div") }),
+    displayText: "blocks",
+    showOverlay: "always",
+  });
+}
 
 export function indentExtension(unit: string): Extension {
   return [

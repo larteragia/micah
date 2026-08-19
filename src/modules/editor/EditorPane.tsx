@@ -43,6 +43,8 @@ import {
   indentExtension,
   languageCompartment,
   lspCompartment,
+  minimapCompartment,
+  minimapExtension,
   vimCompartment,
   wrapCompartment,
 } from "./lib/extensions";
@@ -120,6 +122,7 @@ export const EditorPane = memo(
     const themeExt = useEditorThemeExt();
     const vimMode = usePreferencesStore((s) => s.vimMode);
     const editorWordWrap = usePreferencesStore((s) => s.editorWordWrap);
+    const editorMinimap = usePreferencesStore((s) => s.editorMinimap);
     const languageRef = useRef<string | null>(null);
     const [langId, setLangId] = useState<string | null>(null);
     const apiKeyRef = useRef<string | null>(null);
@@ -316,6 +319,9 @@ export const EditorPane = memo(
             ? EditorView.lineWrapping
             : [],
         ),
+        // Starts empty; the size-gated effect below fills it once the doc is
+        // ready, so multi-MB buffers never pay for a minimap render.
+        minimapCompartment.of([]),
         vimHandlersExtension(() => ({
           save: () => {
             void performSaveRef.current();
@@ -410,6 +416,17 @@ export const EditorPane = memo(
         ),
       });
     }, [doc]);
+
+    useEffect(() => {
+      if (doc.status !== "ready") return;
+      const view = cmRef.current?.view;
+      if (!view) return;
+      view.dispatch({
+        effects: minimapCompartment.reconfigure(
+          minimapExtension(editorMinimap && doc.size <= SYNTAX_MAX_BYTES),
+        ),
+      });
+    }, [editorMinimap, doc]);
 
     const lspExt = useLspExtension(path, langId, doc.status === "ready");
     useEffect(() => {

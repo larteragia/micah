@@ -26,6 +26,7 @@ import {
   setEditorFormatOnSave,
   setEditorFormatter,
   setEditorFormatterByLang,
+  setEditorMinimap,
   setEditorWordWrap,
   setVimMode,
 } from "@/modules/settings/store";
@@ -42,6 +43,7 @@ export function EditorSection() {
   const editorFontSize = usePreferencesStore((s) => s.editorFontSize);
   const vimMode = usePreferencesStore((s) => s.vimMode);
   const editorWordWrap = usePreferencesStore((s) => s.editorWordWrap);
+  const editorMinimap = usePreferencesStore((s) => s.editorMinimap);
   const editorAutoSave = usePreferencesStore((s) => s.editorAutoSave);
   const editorAutoSaveDelay = usePreferencesStore((s) => s.editorAutoSaveDelay);
   const editorFormatOnSave = usePreferencesStore((s) => s.editorFormatOnSave);
@@ -82,6 +84,15 @@ export function EditorSection() {
               ))}
             </SelectContent>
           </Select>
+        </SettingRow>
+        <SettingRow
+          title="Minimap"
+          description="Show a code overview strip on the right edge of the editor."
+        >
+          <Switch
+            checked={editorMinimap}
+            onCheckedChange={(v) => void setEditorMinimap(v)}
+          />
         </SettingRow>
       </div>
 

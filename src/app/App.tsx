@@ -806,10 +806,13 @@ export default function App() {
 
   const handleOpenFile = useCallback(
     (path: string, pin?: boolean) => {
-      // Markdown opens in its rendered view by default; a per-tab toggle flips
-      // it to the raw editor. Other files default to preview (pin=false);
+      // In the workspace, markdown opens rendered by default; a per-tab toggle
+      // flips it to the raw editor. The left panel's Editor mode is an editor,
+      // not a viewer, so markdown lands there editable (the same toggle flips
+      // it back to rendered). Other files default to preview (pin=false);
       // explicit actions like context-menu "Open" pass pin=true to persist.
-      if (isMarkdownPath(path)) newMarkdownTab(path, editorPaneTarget);
+      if (isMarkdownPath(path) && editorPaneTarget !== "left")
+        newMarkdownTab(path, editorPaneTarget);
       else
         openFileTab(path, pin ?? false, {
           pane: editorPaneTarget,
