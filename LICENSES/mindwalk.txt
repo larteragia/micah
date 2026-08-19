@@ -1,16 +1,16 @@
-Ported code and prompts under src/modules/micahs-mind and the report rubric
-in scripts/micahs-mind-report.mjs derive from mindwalk
-(https://github.com/cosmtrek/mindwalk), distributed under the MIT license
-below. The original copyright notice and license text are reproduced
-verbatim as required by the license.
+Micah bundles mindwalk (https://github.com/cosmtrek/mindwalk) as the
+"mindwalk" sidecar binary: upstream tag v0.5.0 (commit 68aeda6) built from
+source with the patches in scripts/mindwalk/patches/ applied (scan cache
+with stale-while-revalidate, repeatable --claude-dir, ?follow=1 UI mode —
+see scripts/mindwalk/build-mindwalk.mjs and the card
+docs/mindwalk-real-no-micahs-mind-2026-08-19.md). mindwalk is distributed
+under the MIT license below; the original copyright notice and license text
+are reproduced verbatim as required.
 
-Port covers: the trace model and stats computation
-(internal/model/{model.go,stats.go}), the claudecode adapter and shared
-classifier (internal/adapter/{adapter.go,claudecode/adapter.go}), the
-squarified treemap citymap (internal/citymap/builder.go) and the judge
-rubric and prompts (internal/judge), all read from the clone at
-/home/ubuntu/projetos/mindwalk on the cavalo-santiago box, upstream HEAD
-77cd795 (2026-08-10).
+The report rubric in scripts/micahs-mind-report.mjs also derives from
+mindwalk (upstream HEAD 77cd795, 2026-08-10). An earlier in-repo port of the
+trace model, claudecode adapter, classifier and citymap under
+src/modules/micahs-mind was removed in favor of the bundled binary.
 
 ---
 

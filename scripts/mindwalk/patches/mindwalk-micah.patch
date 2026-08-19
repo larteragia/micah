@@ -1,0 +1,1478 @@
+diff --git a/cmd/mindwalk/main.go b/cmd/mindwalk/main.go
+index 7b0ab0e..7791e96 100644
+--- a/cmd/mindwalk/main.go
++++ b/cmd/mindwalk/main.go
+@@ -7,6 +7,7 @@ import (
+ 	"fmt"
+ 	"os"
+ 	"path/filepath"
++	"strings"
+ 
+ 	"github.com/cosmtrek/mindwalk/internal/adapter"
+ 	"github.com/cosmtrek/mindwalk/internal/adapter/claudecode"
+@@ -53,7 +54,8 @@ func run(args []string) error {
+ func serve(args []string) error {
+ 	fs := flag.NewFlagSet("serve", flag.ExitOnError)
+ 	port := fs.Int("port", 0, "port to bind on 127.0.0.1")
+-	claudeDir := fs.String("claude-dir", claudecode.DefaultDir(), "Claude Code projects directory")
++	var claudeDirs dirList
++	fs.Var(&claudeDirs, "claude-dir", "Claude Code projects directory; repeat for multiple roots (default "+claudecode.DefaultDir()+")")
+ 	codexDir := fs.String("codex-dir", codex.DefaultDir(), "Codex sessions directory")
+ 	piDir := fs.String("pi-dir", pi.DefaultDir(), "pi sessions directory")
+ 	dev := fs.Bool("dev", false, "prefer web/dist from the working tree")
+@@ -61,13 +63,33 @@ func serve(args []string) error {
+ 	if err := fs.Parse(args); err != nil {
+ 		return err
+ 	}
+-	return server.New(server.Config{Port: *port, ClaudeDir: *claudeDir, CodexDir: *codexDir, PiDir: *piDir, Dev: *dev}).Start(!*noOpen)
++	return server.New(server.Config{Port: *port, ClaudeDirs: claudeDirsOrDefault(claudeDirs), CodexDir: *codexDir, PiDir: *piDir, Dev: *dev}).Start(!*noOpen)
++}
++
++// dirList accumulates every occurrence of a repeatable directory flag.
++type dirList []string
++
++func (d *dirList) String() string { return strings.Join(*d, ", ") }
++
++func (d *dirList) Set(value string) error {
++	*d = append(*d, value)
++	return nil
++}
++
++// claudeDirsOrDefault returns the --claude-dir occurrences, falling back to
++// the standard Claude Code projects directory when the flag never appeared.
++func claudeDirsOrDefault(dirs dirList) []string {
++	if len(dirs) == 0 {
++		return []string{claudecode.DefaultDir()}
++	}
++	return dirs
+ }
+ 
+ func open(args []string) error {
+ 	fs := flag.NewFlagSet("open", flag.ExitOnError)
+ 	port := fs.Int("port", 0, "port to bind on 127.0.0.1")
+-	claudeDir := fs.String("claude-dir", claudecode.DefaultDir(), "Claude Code projects directory")
++	var claudeDirs dirList
++	fs.Var(&claudeDirs, "claude-dir", "Claude Code projects directory; repeat for multiple roots (default "+claudecode.DefaultDir()+")")
+ 	codexDir := fs.String("codex-dir", codex.DefaultDir(), "Codex sessions directory")
+ 	piDir := fs.String("pi-dir", pi.DefaultDir(), "pi sessions directory")
+ 	noOpen := fs.Bool("no-open", false, "serve without opening a browser")
+@@ -81,7 +103,7 @@ func open(args []string) error {
+ 	if err != nil {
+ 		return err
+ 	}
+-	return server.New(server.Config{Port: *port, ClaudeDir: *claudeDir, CodexDir: *codexDir, PiDir: *piDir, OpenSession: session}).Start(!*noOpen)
++	return server.New(server.Config{Port: *port, ClaudeDirs: claudeDirsOrDefault(claudeDirs), CodexDir: *codexDir, PiDir: *piDir, OpenSession: session}).Start(!*noOpen)
+ }
+ 
+ func openMap(args []string) error {
+@@ -269,7 +291,7 @@ func usage() {
+ 
+ Usage:
+   mindwalk                        serve on a random local port and open the UI
+-  mindwalk serve [--port N] [--no-open] [--claude-dir DIR] [--codex-dir DIR] [--pi-dir DIR]
++  mindwalk serve [--port N] [--no-open] [--claude-dir DIR ...] [--codex-dir DIR] [--pi-dir DIR]
+   mindwalk open [--no-open] <session.jsonl> open a specific Claude Code, Codex, or pi session
+   mindwalk map [--no-open] <repo>  open the repository citymap with no session
+   mindwalk build <repo> [-o out]  write citymap.json
+diff --git a/cmd/mindwalk/main_test.go b/cmd/mindwalk/main_test.go
+index 793c422..9f35c7b 100644
+--- a/cmd/mindwalk/main_test.go
++++ b/cmd/mindwalk/main_test.go
+@@ -1,6 +1,37 @@
+ package main
+ 
+-import "testing"
++import (
++	"flag"
++	"reflect"
++	"testing"
++
++	"github.com/cosmtrek/mindwalk/internal/adapter/claudecode"
++)
++
++func TestClaudeDirFlagAccumulatesOccurrences(t *testing.T) {
++	cases := []struct {
++		name string
++		args []string
++		want []string
++	}{
++		{"zero occurrences fall back to the default", nil, []string{claudecode.DefaultDir()}},
++		{"one occurrence", []string{"--claude-dir", "a"}, []string{"a"}},
++		{"two occurrences accumulate in order", []string{"--claude-dir", "a", "--claude-dir", "b"}, []string{"a", "b"}},
++	}
++	for _, tc := range cases {
++		t.Run(tc.name, func(t *testing.T) {
++			fs := flag.NewFlagSet("serve", flag.ContinueOnError)
++			var claudeDirs dirList
++			fs.Var(&claudeDirs, "claude-dir", "")
++			if err := fs.Parse(tc.args); err != nil {
++				t.Fatal(err)
++			}
++			if got := claudeDirsOrDefault(claudeDirs); !reflect.DeepEqual(got, tc.want) {
++				t.Fatalf("claude dirs = %#v, want %#v", got, tc.want)
++			}
++		})
++	}
++}
+ 
+ func TestParseOutputArgsAllowsTrailingOutput(t *testing.T) {
+ 	positional, out, err := parseOutputArgs([]string{"repo", "-o", "citymap.json"})
+diff --git a/internal/citymap/builder.go b/internal/citymap/builder.go
+index f828c62..5cfd5eb 100644
+--- a/internal/citymap/builder.go
++++ b/internal/citymap/builder.go
+@@ -115,11 +115,71 @@ func (Builder) Build(repoRoot string, trace *model.Trace) (*model.CityMap, error
+ 	if err != nil {
+ 		return nil, err
+ 	}
+-	touched := touchedPaths(trace)
+-	candidates, truncated, err := listFiles(root, touched)
++	scan, err := Scan(root, touchedPaths(trace))
+ 	if err != nil {
+ 		return nil, err
+ 	}
++	return Compose(root, scan, trace), nil
++}
++
++// ScanResult is the expensive, cacheable half of a build: every candidate
++// the scan found, already inspected (lines counted, bytes measured), in
++// budget-fill order. Compose never mutates one, so a single result can back
++// any number of maps.
++type ScanResult struct {
++	// Files holds the inspected candidates in budget-fill order. Inspection
++	// stops one success past maxMapFiles — the extra entry is the witness
++	// that the tree holds more than one map can seat — so a huge candidate
++	// tail is never read.
++	Files []model.CityFile
++	// Truncated reports scan-time losses: git list overflow, walk level
++	// stop, probe root cap, and non-benign inspection failures.
++	Truncated bool
++	// SeedDriven reports workspace mode, where the touched set seeded the
++	// scan roots: two traces with different seeds need different scans. In
++	// repo and project modes the touched set plays no part and the result
++	// is trace-independent.
++	SeedDriven bool
++}
++
++// Scan runs the expensive half of a build against an absolute root:
++// candidate enumeration plus per-file inspection. touched steers
++// workspace-mode scans (see probeProjectRoots); in repo and project modes
++// it is ignored.
++func Scan(root string, touched map[string]bool) (*ScanResult, error) {
++	candidates, truncated, seedDriven, err := listFiles(root, touched)
++	if err != nil {
++		return nil, err
++	}
++	files := make([]model.CityFile, 0, min(len(candidates), maxMapFiles+1))
++	for _, rel := range candidates {
++		if len(files) > maxMapFiles {
++			// one success past the budget already proves truncation to
++			// Compose; inspecting the rest of the tail would buy nothing
++			break
++		}
++		meta, err := inspectFileBounded(root, rel)
++		if err != nil {
++			// vanished files and policy-skipped non-regular entries never
++			// truncate the map; anything else — timeout, permission — is
++			// real content the map lost
++			if !benignReadError(err) && !errors.Is(err, errNotRegular) {
++				truncated = true
++			}
++			continue
++		}
++		files = append(files, meta)
++	}
++	return &ScanResult{Files: files, Truncated: truncated, SeedDriven: seedDriven}, nil
++}
++
++// Compose is the cheap, per-session half of a build: it seats trace-touched
++// files first (re-inspecting only those, so a session's fresh edits show
++// current sizes), then ghosts for touched files that are proven gone, then
++// the scanned candidates, and lays the result out. scan is read-only —
++// every seated file is a value copy — so a cached ScanResult can be shared.
++func Compose(root string, scan *ScanResult, trace *model.Trace) *model.CityMap {
++	truncated := scan.Truncated
+ 
+ 	// The map budget is spent on entries that earn their slot, in three
+ 	// tiers: trace-touched files that exist come first (a budget cut must
+@@ -129,7 +189,7 @@ func (Builder) Build(repoRoot string, trace *model.Trace) (*model.CityMap, error
+ 	// consume no budget, and nothing — ghosts included — may push the map
+ 	// past maxMapFiles.
+ 	seen := map[string]bool{}
+-	cityFiles := make([]model.CityFile, 0, min(len(candidates), maxMapFiles))
++	cityFiles := make([]model.CityFile, 0, min(len(scan.Files), maxMapFiles))
+ 	if trace != nil {
+ 		// Aggregate targets before seating anything: dedup by canonical
+ 		// path in first-appearance order (deterministic), with strength
+@@ -179,6 +239,10 @@ func (Builder) Build(repoRoot string, trace *model.Trace) (*model.CityMap, error
+ 					cityFiles = append(cityFiles, meta)
+ 					continue
+ 				}
++				// the fresh verdict on a touched path — gone, not regular,
++				// unreadable — supersedes the scan's possibly-stale copy:
++				// the candidate with the same path must not seat later
++				seen[tt.rel] = true
+ 				if errors.Is(err, errNotRegular) {
+ 					// exists but is not city material — policy skip
+ 					continue
+@@ -212,27 +276,18 @@ func (Builder) Build(repoRoot string, trace *model.Trace) (*model.CityMap, error
+ 			})
+ 		}
+ 	}
+-	for _, rel := range candidates {
++	for i := range scan.Files {
++		rel := scan.Files[i].Path
+ 		if seen[rel] {
+ 			continue
+ 		}
+-		meta, err := inspectFileBounded(root, rel)
+-		if err != nil {
+-			// vanished files and policy-skipped non-regular entries never
+-			// truncate the map; anything else — timeout, permission — is
+-			// real content the map lost
+-			if !benignReadError(err) && !errors.Is(err, errNotRegular) {
+-				truncated = true
+-			}
+-			continue
+-		}
+ 		if len(cityFiles) >= maxMapFiles {
+ 			// a genuinely mappable new file cannot fit
+ 			truncated = true
+ 			break
+ 		}
+ 		seen[rel] = true
+-		cityFiles = append(cityFiles, meta)
++		cityFiles = append(cityFiles, scan.Files[i])
+ 	}
+ 
+ 	sort.Slice(cityFiles, func(i, j int) bool {
+@@ -262,7 +317,7 @@ func (Builder) Build(repoRoot string, trace *model.Trace) (*model.CityMap, error
+ 			Algorithm: "squarified-treemap-v1",
+ 			Weight:    "sqrt(max(lines, bytes/4096, 16))",
+ 		},
+-	}, nil
++	}
+ }
+ 
+ // touchedPaths collects every trace target path. The set steers scanning: a
+@@ -292,13 +347,16 @@ func touchedPaths(trace *model.Trace) map[string]bool {
+ //   - workspace: neither — walk only subtrees that look like projects
+ //
+ // The result is in budget-fill order but deliberately not capped: the
+-// maxMapFiles budget is applied by Build, which charges it only for files
+-// that actually exist. truncated reports scan-budget cuts (git overflow,
+-// walk level stop, root cap) — Build adds its own when the fill overflows.
+-func listFiles(root string, touched map[string]bool) ([]string, bool, error) {
++// maxMapFiles budget is applied by Scan (which stops inspecting one success
++// past it) and by Compose, which charges it only for files that actually
++// exist. truncated reports scan-budget cuts (git overflow, walk level stop,
++// root cap) — Scan and Compose add their own when the fill overflows.
++// The third return reports workspace mode, the only mode where the touched
++// set steers the scan.
++func listFiles(root string, touched map[string]bool) ([]string, bool, bool, error) {
+ 	files, overflow, err := gitListFiles(root)
+ 	if err == nil && len(files) > 0 {
+-		return orderCandidates(files), overflow, nil
++		return orderCandidates(files), overflow, false, nil
+ 	}
+ 
+ 	workspace := !hasProjectMarker(root)
+@@ -309,9 +367,9 @@ func listFiles(root string, touched map[string]bool) ([]string, bool, error) {
+ 	}
+ 	files, walkTruncated := walkFiles(root, scanRoots, workspace)
+ 	if len(files) == 0 {
+-		return nil, false, errors.New("no files found")
++		return nil, false, workspace, errors.New("no files found")
+ 	}
+-	return orderCandidates(files), probeTruncated || walkTruncated, nil
++	return orderCandidates(files), probeTruncated || walkTruncated, workspace, nil
+ }
+ 
+ // gitListFiles streams git ls-files so a repo spanning a huge tree (a
+diff --git a/internal/citymap/cache.go b/internal/citymap/cache.go
+new file mode 100644
+index 0000000..4b24eb3
+--- /dev/null
++++ b/internal/citymap/cache.go
+@@ -0,0 +1,293 @@
++package citymap
++
++import (
++	"crypto/sha256"
++	"encoding/hex"
++	"fmt"
++	"log"
++	"path"
++	"path/filepath"
++	"runtime/debug"
++	"sort"
++	"strings"
++	"sync"
++	"time"
++
++	"github.com/cosmtrek/mindwalk/internal/model"
++)
++
++// Scan-cache limits. Package-level vars so tests can shrink them; production
++// code treats them as constants.
++var (
++	// scanCacheTTL is how long a cached ScanResult keeps serving rebuilds.
++	// Within it, untouched files' line counts and the candidate set itself
++	// may age; trace-touched files are always re-inspected fresh by
++	// Compose, so the staleness never lands on the session's own work.
++	scanCacheTTL = 15 * time.Minute
++	// scanCacheMaxEntries bounds the cache; the least recently used entry
++	// is evicted first. Scans are big — up to maxMapFiles inspected files
++	// each — so the cap stays small.
++	scanCacheMaxEntries = 8
++)
++
++// scanFn is the scan entry point CachedBuilder invokes — a package var so
++// tests can wrap it to count cache misses.
++var scanFn = Scan
++
++// CachedBuilder builds citymaps with the same contract as Builder but
++// caches the expensive Scan half, so a snapshot rebuild (trace growth,
++// upstream cache TTL) re-runs only the cheap Compose half: re-inspect the
++// touched files, seat, lay out. Safe for concurrent use; concurrent builds
++// with the same cache key share one scan.
++type CachedBuilder struct {
++	mu       sync.Mutex
++	entries  map[string]*scanEntry
++	inflight map[string]*scanFlight
++	// lastByRoot remembers the most recently stored cache key per root, so a
++	// reseeded workspace scan can serve the previous scan stale while the new
++	// one runs in the background (see cachedScan).
++	lastByRoot map[string]string
++	// revalidating marks roots with a background rescan already in flight.
++	// One at a time per root: a live session touching a new directory per
++	// tick would otherwise stack unbounded concurrent walks of the same
++	// tree (each a multi-minute $HOME walk).
++	revalidating map[string]bool
++}
++
++type scanEntry struct {
++	scan *ScanResult
++	at   time.Time
++	used time.Time
++}
++
++type scanFlight struct {
++	done chan struct{}
++	scan *ScanResult
++	err  error
++}
++
++func NewCachedBuilder() *CachedBuilder {
++	return &CachedBuilder{
++		entries:      map[string]*scanEntry{},
++		inflight:     map[string]*scanFlight{},
++		lastByRoot:   map[string]string{},
++		revalidating: map[string]bool{},
++	}
++}
++
++// Build has the same signature and output as Builder.Build; only the scan
++// half's freshness differs, and only within scanCacheTTL.
++//
++// A nil trace is the explicit repo-map request (/api/repomap): the caller is
++// asking what the repository looks like NOW, and that endpoint keeps its own
++// freshness contract (repoMapTTL) — so it bypasses this cache entirely, read
++// and write.
++func (cb *CachedBuilder) Build(repoRoot string, trace *model.Trace) (*model.CityMap, error) {
++	if trace == nil {
++		return Builder{}.Build(repoRoot, nil)
++	}
++	root, err := filepath.Abs(repoRoot)
++	if err != nil {
++		return nil, err
++	}
++	scan, err := cb.cachedScan(root, touchedPaths(trace))
++	if err != nil {
++		return nil, err
++	}
++	return Compose(root, scan, trace), nil
++}
++
++// cachedScan returns a ScanResult for root, scanning at most once per cache
++// key. Two keys cover the two scan identities: a repo- or project-mode scan
++// ignores the touched set, so it lives under the bare root and every trace
++// reuses it; a workspace-mode scan is seeded by the touched set (see
++// probeProjectRoots), so it lives under root plus a fingerprint of the
++// seed-relevant directories. Which identity a root has is only known after
++// scanning, so lookups try both and the store picks the honest one.
++func (cb *CachedBuilder) cachedScan(root string, touched map[string]bool) (*ScanResult, error) {
++	rootKey := root
++	seededKey := root + "\x00" + seedFingerprint(touched)
++
++	cb.mu.Lock()
++	if scan := cb.lookupLocked(rootKey); scan != nil {
++		cb.mu.Unlock()
++		return scan, nil
++	}
++	if scan := cb.lookupLocked(seededKey); scan != nil {
++		cb.mu.Unlock()
++		return scan, nil
++	}
++	// Stale-while-revalidate: blocking here would freeze a live follow for a
++	// full walk — minutes on a workspace root like $HOME. Two stales can
++	// stand in: the same key just past its soft TTL (grace window, capped at
++	// twice the TTL) and the root's most recent scan under an older seed
++	// set. The session's own touches are always seated fresh by Compose, so
++	// the staleness is confined to the undiscovered neighborhood. Only a
++	// root with no serviceable entry at all still blocks.
++	stale := cb.staleLocked(seededKey)
++	if stale == nil {
++		if lastKey, ok := cb.lastByRoot[root]; ok && lastKey != seededKey {
++			stale = cb.lookupLocked(lastKey)
++			if stale == nil {
++				stale = cb.staleLocked(lastKey)
++			}
++		}
++	}
++	if flight := cb.inflight[seededKey]; flight != nil {
++		if stale != nil {
++			cb.mu.Unlock()
++			return stale, nil
++		}
++		done := flight.done
++		cb.mu.Unlock()
++		<-done
++		return flight.scan, flight.err
++	}
++	if stale != nil && cb.revalidating[root] {
++		// one background walk per root at a time — a follow session touching
++		// a new directory every tick must not stack concurrent full walks;
++		// the next request retries once the running one lands
++		cb.mu.Unlock()
++		return stale, nil
++	}
++	flight := &scanFlight{done: make(chan struct{})}
++	cb.inflight[seededKey] = flight
++	if stale != nil {
++		cb.revalidating[root] = true
++	}
++	cb.mu.Unlock()
++
++	if stale != nil {
++		go cb.runScan(seededKey, rootKey, flight, root, touched, true)
++		return stale, nil
++	}
++	cb.runScan(seededKey, rootKey, flight, root, touched, false)
++	return flight.scan, flight.err
++}
++
++// runScan executes the shared scan without holding the lock and publishes
++// the result on flight. The finalize step — cache the result, drop the
++// inflight entry, close flight.done — runs in a defer so a panicking scan
++// cannot leave later requests blocked forever on a done channel nothing
++// closes. Errors are never cached: the next request scans again. A
++// background revalidation has no caller waiting on the flight, so its
++// failure is logged — silently dropping it would leave the map stale with
++// no signal until the grace window closed.
++func (cb *CachedBuilder) runScan(flightKey, rootKey string, flight *scanFlight, root string, touched map[string]bool, background bool) {
++	defer func() {
++		if r := recover(); r != nil {
++			flight.scan = nil
++			flight.err = fmt.Errorf("scan %s: %v", root, r)
++			log.Printf("mindwalk: panic scanning %s: %v\n%s", root, r, debug.Stack())
++		}
++		if background && flight.err != nil {
++			log.Printf("mindwalk: background rescan of %s failed: %v", root, flight.err)
++		}
++		cb.mu.Lock()
++		if flight.err == nil {
++			key := flightKey
++			if !flight.scan.SeedDriven {
++				// the touched set played no part in this scan — degrade
++				// the key to the bare root so every trace shares it
++				key = rootKey
++			}
++			now := time.Now()
++			cb.entries[key] = &scanEntry{scan: flight.scan, at: now, used: now}
++			cb.lastByRoot[root] = key
++			cb.evictLocked()
++		}
++		delete(cb.inflight, flightKey)
++		if background {
++			delete(cb.revalidating, root)
++		}
++		close(flight.done)
++		cb.mu.Unlock()
++	}()
++	flight.scan, flight.err = scanFn(root, touched)
++}
++
++// lookupLocked returns a fresh cache entry's scan. An entry past its soft
++// TTL is left in place — staleLocked may still serve it within the grace
++// window. Caller must hold mu.
++func (cb *CachedBuilder) lookupLocked(key string) *ScanResult {
++	entry := cb.entries[key]
++	if entry == nil {
++		return nil
++	}
++	if time.Since(entry.at) >= scanCacheTTL {
++		return nil
++	}
++	entry.used = time.Now()
++	return entry.scan
++}
++
++// staleLocked returns an entry past its soft TTL but within the grace
++// window (twice the TTL), keeping it in place while a background
++// revalidation replaces it. Without the grace window, a follow session on a
++// workspace root would freeze for a full walk every TTL expiry. Entries
++// older than the grace window are dropped — stale must not become forever.
++// Caller must hold mu.
++func (cb *CachedBuilder) staleLocked(key string) *ScanResult {
++	entry := cb.entries[key]
++	if entry == nil {
++		return nil
++	}
++	age := time.Since(entry.at)
++	if age < scanCacheTTL {
++		// fresh — lookupLocked's business, not a stale serve
++		return nil
++	}
++	if age >= 2*scanCacheTTL {
++		delete(cb.entries, key)
++		return nil
++	}
++	entry.used = time.Now()
++	return entry.scan
++}
++
++// evictLocked bounds the cache by dropping the least recently used entries
++// once it grows past scanCacheMaxEntries. Caller must hold mu.
++func (cb *CachedBuilder) evictLocked() {
++	for len(cb.entries) > scanCacheMaxEntries {
++		var oldestKey string
++		var oldest time.Time
++		for key, entry := range cb.entries {
++			if oldestKey == "" || entry.used.Before(oldest) {
++				oldestKey = key
++				oldest = entry.used
++			}
++		}
++		if oldestKey == "" {
++			return
++		}
++		delete(cb.entries, oldestKey)
++	}
++}
++
++// seedFingerprint hashes the projection of the touched set that steers a
++// workspace-mode scan: the parent directory of every touched relative path.
++// probeProjectRoots seeds exactly those directories in as scan roots, and
++// their first components are what gate the protected macOS folders, so two
++// touched sets with equal parent-directory sets produce identical scans.
++// Root-level touches and absolute or escaping paths never steer a scan, so
++// they never shape the key either.
++func seedFingerprint(touched map[string]bool) string {
++	dirs := map[string]bool{}
++	for p := range touched {
++		rel := cleanRel(p)
++		if rel == "" || !strings.Contains(rel, "/") {
++			continue
++		}
++		dirs[path.Dir(rel)] = true
++	}
++	if len(dirs) == 0 {
++		return ""
++	}
++	sorted := make([]string, 0, len(dirs))
++	for dir := range dirs {
++		sorted = append(sorted, dir)
++	}
++	sort.Strings(sorted)
++	sum := sha256.Sum256([]byte(strings.Join(sorted, "\x00")))
++	return hex.EncodeToString(sum[:])
++}
+diff --git a/internal/citymap/cache_test.go b/internal/citymap/cache_test.go
+new file mode 100644
+index 0000000..ea6b070
+--- /dev/null
++++ b/internal/citymap/cache_test.go
+@@ -0,0 +1,522 @@
++package citymap
++
++import (
++	"encoding/json"
++	"sync"
++	"sync/atomic"
++	"testing"
++	"time"
++
++	"github.com/cosmtrek/mindwalk/internal/model"
++)
++
++// drainFlights waits until no scan flight or background revalidation is
++// pending, so a test cannot leak a goroutine that keeps reading the package
++// vars (scanFn, TTLs) after another test's cleanup rewrites them.
++func drainFlights(t *testing.T, cb *CachedBuilder) {
++	t.Helper()
++	deadline := time.Now().Add(10 * time.Second)
++	for {
++		cb.mu.Lock()
++		idle := len(cb.inflight) == 0 && len(cb.revalidating) == 0
++		cb.mu.Unlock()
++		if idle {
++			return
++		}
++		if time.Now().After(deadline) {
++			t.Fatal("scan flights never drained")
++		}
++		time.Sleep(10 * time.Millisecond)
++	}
++}
++
++// countScans wraps the package scan entry point so a test can count how many
++// times a CachedBuilder actually re-scanned (cache misses).
++func countScans(t *testing.T) *int32 {
++	t.Helper()
++	var n int32
++	prev := scanFn
++	scanFn = func(root string, touched map[string]bool) (*ScanResult, error) {
++		atomic.AddInt32(&n, 1)
++		return prev(root, touched)
++	}
++	t.Cleanup(func() { scanFn = prev })
++	return &n
++}
++
++func mapJSON(t *testing.T, city *model.CityMap) string {
++	t.Helper()
++	clone := *city
++	clone.Repo.GeneratedAt = ""
++	data, err := json.Marshal(clone)
++	if err != nil {
++		t.Fatal(err)
++	}
++	return string(data)
++}
++
++func hasPath(city *model.CityMap, path string) bool {
++	for _, file := range city.Files {
++		if file.Path == path {
++			return true
++		}
++	}
++	return false
++}
++
++func touchTrace(paths ...string) *model.Trace {
++	targets := make([]model.Target, 0, len(paths))
++	for _, p := range paths {
++		targets = append(targets, model.Target{Path: p, Touch: "read"})
++	}
++	return &model.Trace{Events: []model.Event{{Targets: targets}}}
++}
++
++func TestCachedBuildScansOncePerRoot(t *testing.T) {
++	calls := countScans(t)
++	root := t.TempDir()
++	writeFile(t, root, "src/main.go", "package main\nfunc main() {}\n")
++	writeFile(t, root, "README.md", "# Demo\n")
++	runGit(t, root, "init")
++	runGit(t, root, "add", ".")
++
++	cb := NewCachedBuilder()
++	first, err := cb.Build(root, touchTrace())
++	if err != nil {
++		t.Fatal(err)
++	}
++	second, err := cb.Build(root, touchTrace())
++	if err != nil {
++		t.Fatal(err)
++	}
++	if got := atomic.LoadInt32(calls); got != 1 {
++		t.Fatalf("scans = %d, want 1 (second build must reuse the cached scan)", got)
++	}
++	if a, b := mapJSON(t, first), mapJSON(t, second); a != b {
++		t.Fatalf("cached rebuild diverged\nfirst=%s\nsecond=%s", a, b)
++	}
++	fresh, err := (Builder{}).Build(root, nil)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if a, b := mapJSON(t, second), mapJSON(t, fresh); a != b {
++		t.Fatalf("cached build diverged from fresh build\ncached=%s\nfresh=%s", a, b)
++	}
++}
++
++func TestWorkspaceSeedsChangeTheScanKey(t *testing.T) {
++	calls := countScans(t)
++	root := t.TempDir() // no marker, no git — workspace mode
++	writeFile(t, root, "proj/go.mod", "module proj\n")
++	writeFile(t, root, "notes/a.md", "# a\n")
++	writeFile(t, root, "docs/b.md", "# b\n")
++
++	cb := NewCachedBuilder()
++	notes, err := cb.Build(root, touchTrace("notes/a.md"))
++	if err != nil {
++		t.Fatal(err)
++	}
++	if got := atomic.LoadInt32(calls); got != 1 {
++		t.Fatalf("scans = %d, want 1", got)
++	}
++	if !hasPath(notes, "notes/a.md") || hasPath(notes, "docs/b.md") {
++		t.Fatalf("notes-seeded map wrong: %#v", notes.Files)
++	}
++
++	// A new seed set serves the previous root scan stale and revalidates in
++	// the background: the build returns at once, its own touches seated
++	// fresh by Compose, and the reseeded scan lands shortly after.
++	docs, err := cb.Build(root, touchTrace("docs/b.md"))
++	if err != nil {
++		t.Fatal(err)
++	}
++	if !hasPath(docs, "docs/b.md") {
++		t.Fatalf("stale-based map missing its own touched file: %#v", docs.Files)
++	}
++	deadline := time.Now().Add(10 * time.Second)
++	for atomic.LoadInt32(calls) < 2 {
++		if time.Now().After(deadline) {
++			t.Fatalf("scans = %d, want 2 (background reseeded scan never ran)", atomic.LoadInt32(calls))
++		}
++		time.Sleep(10 * time.Millisecond)
++	}
++
++	// once the background scan lands, the seeded entry serves without a
++	// third scan — poll because landing happens after the counter bumps
++	deadline = time.Now().Add(10 * time.Second)
++	for {
++		docs2, err := cb.Build(root, touchTrace("docs/b.md"))
++		if err != nil {
++			t.Fatal(err)
++		}
++		if hasPath(docs2, "docs/b.md") && atomic.LoadInt32(calls) == 2 {
++			break
++		}
++		if time.Now().After(deadline) {
++			t.Fatalf("reseeded entry never became servable (scans = %d)", atomic.LoadInt32(calls))
++		}
++		time.Sleep(10 * time.Millisecond)
++	}
++
++	// the first seed set must still be cached
++	if _, err := cb.Build(root, touchTrace("notes/a.md")); err != nil {
++		t.Fatal(err)
++	}
++	if got := atomic.LoadInt32(calls); got != 2 {
++		t.Fatalf("scans = %d, want 2 (earlier seed set must still hit)", got)
++	}
++	drainFlights(t, cb)
++}
++
++func TestRepoModeKeyIgnoresSeeds(t *testing.T) {
++	calls := countScans(t)
++	root := t.TempDir()
++	writeFile(t, root, "a/a.go", "package a\n")
++	writeFile(t, root, "b/b.go", "package b\n")
++	runGit(t, root, "init")
++	runGit(t, root, "add", ".")
++
++	cb := NewCachedBuilder()
++	if _, err := cb.Build(root, touchTrace("a/a.go")); err != nil {
++		t.Fatal(err)
++	}
++	city, err := cb.Build(root, touchTrace("b/b.go"))
++	if err != nil {
++		t.Fatal(err)
++	}
++	if got := atomic.LoadInt32(calls); got != 1 {
++		t.Fatalf("scans = %d, want 1 (repo-mode scans ignore seeds — the key must degrade to the root)", got)
++	}
++	if !hasPath(city, "b/b.go") {
++		t.Fatalf("touched file missing from cached-scan build: %#v", city.Files)
++	}
++}
++
++func TestComposeDoesNotMutateScanResult(t *testing.T) {
++	root := t.TempDir()
++	writeFile(t, root, "src/main.go", "package main\nfunc main() {}\n")
++	writeFile(t, root, "src/util.go", "package main\nfunc util() {}\n")
++	writeFile(t, root, "README.md", "# Demo\n")
++	runGit(t, root, "init")
++	runGit(t, root, "add", ".")
++
++	scan, err := Scan(root, nil)
++	if err != nil {
++		t.Fatal(err)
++	}
++	before, err := json.Marshal(scan)
++	if err != nil {
++		t.Fatal(err)
++	}
++
++	// touch one existing file (fresh re-inspection supersedes the pool
++	// copy) and one missing file (ghost) so every seating tier runs
++	trace := touchTrace("src/main.go", "missing.go")
++	first := Compose(root, scan, trace)
++	second := Compose(root, scan, trace)
++	if a, b := mapJSON(t, first), mapJSON(t, second); a != b {
++		t.Fatalf("two composes over one scan diverged\nfirst=%s\nsecond=%s", a, b)
++	}
++
++	// the maps must be independent: wrecking one cannot bleed into the
++	// other or back into the scan
++	secondBefore := mapJSON(t, second)
++	for i := range first.Files {
++		first.Files[i].ID = -1
++		first.Files[i].Lines = -1
++		first.Files[i].Rect = model.Rect{X: -1, Z: -1, W: -1, D: -1}
++	}
++	if got := mapJSON(t, second); got != secondBefore {
++		t.Fatal("mutating one composed map changed another")
++	}
++	after, err := json.Marshal(scan)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if string(after) != string(before) {
++		t.Fatalf("Compose mutated the ScanResult\nbefore=%s\nafter=%s", before, after)
++	}
++}
++
++func TestConcurrentBuildsShareOneScan(t *testing.T) {
++	calls := countScans(t)
++	root := t.TempDir()
++	writeFile(t, root, "main.go", "package main\n")
++	runGit(t, root, "init")
++	runGit(t, root, "add", ".")
++
++	cb := NewCachedBuilder()
++	const n = 8
++	maps := make([]*model.CityMap, n)
++	errs := make([]error, n)
++	var wg sync.WaitGroup
++	for i := 0; i < n; i++ {
++		wg.Add(1)
++		go func(i int) {
++			defer wg.Done()
++			maps[i], errs[i] = cb.Build(root, touchTrace())
++		}(i)
++	}
++	wg.Wait()
++	for i := 0; i < n; i++ {
++		if errs[i] != nil {
++			t.Fatal(errs[i])
++		}
++		if maps[i] == nil || !hasPath(maps[i], "main.go") {
++			t.Fatalf("build %d returned a wrong map: %#v", i, maps[i])
++		}
++	}
++	if got := atomic.LoadInt32(calls); got != 1 {
++		t.Fatalf("scans = %d, want 1 (concurrent builds must share one scan)", got)
++	}
++}
++
++func TestScanCacheExpiresByTTL(t *testing.T) {
++	prev := scanCacheTTL
++	scanCacheTTL = 0
++	t.Cleanup(func() { scanCacheTTL = prev })
++
++	calls := countScans(t)
++	root := t.TempDir()
++	writeFile(t, root, "main.go", "package main\n")
++	runGit(t, root, "init")
++	runGit(t, root, "add", ".")
++
++	cb := NewCachedBuilder()
++	for i := 0; i < 2; i++ {
++		if _, err := cb.Build(root, touchTrace()); err != nil {
++			t.Fatal(err)
++		}
++	}
++	if got := atomic.LoadInt32(calls); got != 2 {
++		t.Fatalf("scans = %d, want 2 (expired entries must re-scan)", got)
++	}
++}
++
++func TestScanCacheEvictsLeastRecentlyUsed(t *testing.T) {
++	prev := scanCacheMaxEntries
++	scanCacheMaxEntries = 1
++	t.Cleanup(func() { scanCacheMaxEntries = prev })
++
++	calls := countScans(t)
++	rootA := t.TempDir()
++	writeFile(t, rootA, "a.go", "package a\n")
++	runGit(t, rootA, "init")
++	runGit(t, rootA, "add", ".")
++	rootB := t.TempDir()
++	writeFile(t, rootB, "b.go", "package b\n")
++	runGit(t, rootB, "init")
++	runGit(t, rootB, "add", ".")
++
++	cb := NewCachedBuilder()
++	for _, root := range []string{rootA, rootB, rootA} {
++		if _, err := cb.Build(root, touchTrace()); err != nil {
++			t.Fatal(err)
++		}
++	}
++	if got := atomic.LoadInt32(calls); got != 3 {
++		t.Fatalf("scans = %d, want 3 (cap 1 must evict the older root)", got)
++	}
++}
++
++func TestScanErrorsAreNotCached(t *testing.T) {
++	calls := countScans(t)
++	root := t.TempDir() // empty: the scan finds nothing and errors
++
++	cb := NewCachedBuilder()
++	if _, err := cb.Build(root, touchTrace()); err == nil {
++		t.Fatal("expected an error for an empty root")
++	}
++	writeFile(t, root, "main.go", "package main\n")
++	city, err := cb.Build(root, touchTrace())
++	if err != nil {
++		t.Fatal(err)
++	}
++	if !hasPath(city, "main.go") {
++		t.Fatalf("files = %#v", city.Files)
++	}
++	if got := atomic.LoadInt32(calls); got != 2 {
++		t.Fatalf("scans = %d, want 2 (errors must never be cached)", got)
++	}
++}
++
++// TestReseededScanNeverBlocksTheCaller pins the stale-while-revalidate
++// contract: while the reseeded background scan is still running — however
++// long it takes — builds for that root keep answering instantly from the
++// previous scan instead of blocking a live follow.
++func TestReseededScanNeverBlocksTheCaller(t *testing.T) {
++	root := t.TempDir() // workspace mode
++	writeFile(t, root, "proj/go.mod", "module proj\n")
++	writeFile(t, root, "notes/a.md", "# a\n")
++	writeFile(t, root, "docs/b.md", "# b\n")
++
++	gate := make(chan struct{})
++	var releaseGate sync.Once
++	release := func() { releaseGate.Do(func() { close(gate) }) }
++	var scans int32
++	prev := scanFn
++	scanFn = func(r string, touched map[string]bool) (*ScanResult, error) {
++		if atomic.AddInt32(&scans, 1) > 1 {
++			<-gate // every scan after the first hangs until released
++		}
++		return prev(r, touched)
++	}
++	t.Cleanup(func() { release(); scanFn = prev })
++
++	cb := NewCachedBuilder()
++	if _, err := cb.Build(root, touchTrace("notes/a.md")); err != nil {
++		t.Fatal(err)
++	}
++
++	// the reseeded build must return before the gated scan completes
++	done := make(chan *model.CityMap, 1)
++	go func() {
++		city, err := cb.Build(root, touchTrace("docs/b.md"))
++		if err != nil {
++			t.Error(err)
++		}
++		done <- city
++	}()
++	select {
++	case city := <-done:
++		if !hasPath(city, "docs/b.md") {
++			t.Fatalf("stale-based map missing its own touched file: %#v", city.Files)
++		}
++	case <-time.After(5 * time.Second):
++		t.Fatal("reseeded build blocked on the background scan")
++	}
++
++	// and so must every later build while the flight is still gated
++	if _, err := cb.Build(root, touchTrace("docs/b.md", "notes/a.md")); err != nil {
++		t.Fatal(err)
++	}
++
++	// drain before cleanup rewrites the package vars under the goroutine
++	release()
++	drainFlights(t, cb)
++}
++
++// TestOneBackgroundRevalidationPerRoot pins the herd guard: a follow session
++// touching a new directory every tick must not stack concurrent full walks
++// of the same root — while one background rescan runs, further reseeded
++// builds serve stale without spawning another.
++func TestOneBackgroundRevalidationPerRoot(t *testing.T) {
++	root := t.TempDir() // workspace mode
++	writeFile(t, root, "proj/go.mod", "module proj\n")
++	writeFile(t, root, "notes/a.md", "# a\n")
++	writeFile(t, root, "docs/b.md", "# b\n")
++	writeFile(t, root, "letters/c.md", "# c\n")
++
++	gate := make(chan struct{})
++	var releaseGate sync.Once
++	release := func() { releaseGate.Do(func() { close(gate) }) }
++	var scans int32
++	prev := scanFn
++	scanFn = func(r string, touched map[string]bool) (*ScanResult, error) {
++		if atomic.AddInt32(&scans, 1) > 1 {
++			<-gate
++		}
++		return prev(r, touched)
++	}
++	t.Cleanup(func() { release(); scanFn = prev })
++
++	cb := NewCachedBuilder()
++	if _, err := cb.Build(root, touchTrace("notes/a.md")); err != nil {
++		t.Fatal(err)
++	}
++
++	// first new seed spawns the one allowed background rescan (gated)
++	if _, err := cb.Build(root, touchTrace("docs/b.md")); err != nil {
++		t.Fatal(err)
++	}
++	deadline := time.Now().Add(5 * time.Second)
++	for atomic.LoadInt32(&scans) < 2 {
++		if time.Now().After(deadline) {
++			t.Fatal("background rescan never started")
++		}
++		time.Sleep(5 * time.Millisecond)
++	}
++
++	// second new seed while the first is still walking: stale, no new spawn
++	city, err := cb.Build(root, touchTrace("letters/c.md"))
++	if err != nil {
++		t.Fatal(err)
++	}
++	if !hasPath(city, "letters/c.md") {
++		t.Fatalf("stale-based map missing its own touched file: %#v", city.Files)
++	}
++	if got := atomic.LoadInt32(&scans); got != 2 {
++		t.Fatalf("scans = %d, want 2 (a second background walk was spawned)", got)
++	}
++
++	release()
++	drainFlights(t, cb)
++	if got := atomic.LoadInt32(&scans); got != 2 {
++		t.Fatalf("scans = %d after drain, want 2", got)
++	}
++}
++
++// TestExpiredEntryServesStaleWithinGrace pins the TTL grace window: a seed-
++// stable follow session must not freeze for a full walk when the cache
++// entry crosses its soft TTL — the expired entry stands in one more round
++// while the rescan runs in the background.
++func TestExpiredEntryServesStaleWithinGrace(t *testing.T) {
++	prevTTL := scanCacheTTL
++	scanCacheTTL = 200 * time.Millisecond
++	t.Cleanup(func() { scanCacheTTL = prevTTL })
++
++	root := t.TempDir() // workspace mode
++	writeFile(t, root, "proj/go.mod", "module proj\n")
++	writeFile(t, root, "notes/a.md", "# a\n")
++
++	gate := make(chan struct{})
++	var releaseGate sync.Once
++	release := func() { releaseGate.Do(func() { close(gate) }) }
++	var scans int32
++	prev := scanFn
++	scanFn = func(r string, touched map[string]bool) (*ScanResult, error) {
++		if atomic.AddInt32(&scans, 1) > 1 {
++			<-gate
++		}
++		return prev(r, touched)
++	}
++	t.Cleanup(func() { release(); scanFn = prev })
++
++	cb := NewCachedBuilder()
++	if _, err := cb.Build(root, touchTrace("notes/a.md")); err != nil {
++		t.Fatal(err)
++	}
++
++	// cross the soft TTL but stay inside the grace window (2×TTL)
++	time.Sleep(250 * time.Millisecond)
++
++	done := make(chan *model.CityMap, 1)
++	go func() {
++		city, err := cb.Build(root, touchTrace("notes/a.md"))
++		if err != nil {
++			t.Error(err)
++		}
++		done <- city
++	}()
++	select {
++	case city := <-done:
++		if !hasPath(city, "notes/a.md") {
++			t.Fatalf("grace-served map missing the touched file: %#v", city.Files)
++		}
++	case <-time.After(5 * time.Second):
++		t.Fatal("build blocked on TTL expiry instead of serving the grace-window stale")
++	}
++	deadline := time.Now().Add(5 * time.Second)
++	for atomic.LoadInt32(&scans) < 2 {
++		if time.Now().After(deadline) {
++			t.Fatal("expiry never revalidated in background")
++		}
++		time.Sleep(5 * time.Millisecond)
++	}
++
++	release()
++	drainFlights(t, cb)
++	if got := atomic.LoadInt32(&scans); got != 2 {
++		t.Fatalf("scans = %d after drain, want 2", got)
++	}
++}
+diff --git a/internal/server/multiroot_test.go b/internal/server/multiroot_test.go
+new file mode 100644
+index 0000000..71abd88
+--- /dev/null
++++ b/internal/server/multiroot_test.go
+@@ -0,0 +1,139 @@
++package server
++
++import (
++	"os"
++	"path/filepath"
++	"runtime"
++	"strings"
++	"testing"
++)
++
++func TestMultipleClaudeDirsListSessionsFromEach(t *testing.T) {
++	dirA := t.TempDir()
++	dirB := t.TempDir()
++	writeServerSession(t, filepath.Join(dirA, "alpha.jsonl"),
++		`{"type":"user","timestamp":"2026-07-09T00:00:00Z","sessionId":"alpha","cwd":"/tmp","message":{"role":"user","content":"hello"}}`,
++	)
++	writeServerSession(t, filepath.Join(dirB, "beta.jsonl"),
++		`{"type":"user","timestamp":"2026-07-09T00:00:01Z","sessionId":"beta","cwd":"/tmp","message":{"role":"user","content":"hello"}}`,
++	)
++
++	s := New(Config{ClaudeDirs: []string{dirA, dirB}, CodexDir: filepath.Join(t.TempDir(), "codex"), PiDir: filepath.Join(t.TempDir(), "pi")})
++	if got := countClaudeAdapters(s); got != 2 {
++		t.Fatalf("claude adapters = %d, want 2", got)
++	}
++	sessions, err := s.listSessions()
++	if err != nil {
++		t.Fatal(err)
++	}
++	ids := map[string]bool{}
++	for _, session := range sessions {
++		ids[session.ID] = true
++	}
++	if len(sessions) != 2 || !ids["alpha"] || !ids["beta"] {
++		t.Fatalf("sessions = %#v", sessions)
++	}
++}
++
++func TestDuplicateClaudeDirsCollapseToOneAdapter(t *testing.T) {
++	claudeDir := t.TempDir()
++	writeServerSession(t, filepath.Join(claudeDir, "solo.jsonl"),
++		`{"type":"user","timestamp":"2026-07-09T00:00:00Z","sessionId":"solo-id","cwd":"/tmp","message":{"role":"user","content":"hello"}}`,
++	)
++
++	s := New(Config{ClaudeDirs: []string{claudeDir, claudeDir}, CodexDir: filepath.Join(t.TempDir(), "codex"), PiDir: filepath.Join(t.TempDir(), "pi")})
++	if got := countClaudeAdapters(s); got != 1 {
++		t.Fatalf("claude adapters = %d, want 1", got)
++	}
++	sessions, err := s.listSessions()
++	if err != nil {
++		t.Fatal(err)
++	}
++	if len(sessions) != 1 {
++		t.Fatalf("sessions = %#v", sessions)
++	}
++	// A duplicated dir would index the same file under two keys with the same
++	// session ID, making the ID ambiguous; deduped, the ID resolves cleanly.
++	meta, err := s.findSession("solo-id")
++	if err != nil {
++		t.Fatal(err)
++	}
++	if meta.ID != "solo-id" {
++		t.Fatalf("meta = %#v", meta)
++	}
++}
++
++func TestCaseVariantClaudeDirsDedupeOnWindows(t *testing.T) {
++	if runtime.GOOS != "windows" {
++		t.Skip("case-insensitive path dedupe is Windows-specific")
++	}
++	claudeDir := t.TempDir()
++	writeServerSession(t, filepath.Join(claudeDir, "solo.jsonl"),
++		`{"type":"user","timestamp":"2026-07-09T00:00:00Z","sessionId":"solo-id","cwd":"/tmp","message":{"role":"user","content":"hello"}}`,
++	)
++
++	variant := strings.ToUpper(claudeDir)
++	if variant == claudeDir {
++		t.Skipf("temp dir %q has no case-variant spelling", claudeDir)
++	}
++	s := New(Config{ClaudeDirs: []string{claudeDir, variant}, CodexDir: filepath.Join(t.TempDir(), "codex"), PiDir: filepath.Join(t.TempDir(), "pi")})
++	if got := countClaudeAdapters(s); got != 1 {
++		t.Fatalf("claude adapters = %d, want 1", got)
++	}
++	meta, err := s.findSession("solo-id")
++	if err != nil {
++		t.Fatal(err)
++	}
++	if meta.ID != "solo-id" {
++		t.Fatalf("meta = %#v", meta)
++	}
++}
++
++// TestSingleClaudeDirConfigStillBuildsOneAdapter pins the compat path: the
++// old single-dir field keeps working, alone and mixed with ClaudeDirs.
++func TestSingleClaudeDirConfigStillBuildsOneAdapter(t *testing.T) {
++	claudeDir := t.TempDir()
++	s := New(Config{ClaudeDir: claudeDir})
++	if got := countClaudeAdapters(s); got != 1 {
++		t.Fatalf("claude adapters = %d, want 1", got)
++	}
++	mixed := New(Config{ClaudeDirs: []string{claudeDir}, ClaudeDir: claudeDir})
++	if got := countClaudeAdapters(mixed); got != 1 {
++		t.Fatalf("claude adapters with both fields = %d, want 1", got)
++	}
++}
++
++func countClaudeAdapters(s *Server) int {
++	count := 0
++	for _, source := range s.adapters {
++		if source.Harness() == "claude-code" {
++			count++
++		}
++	}
++	return count
++}
++
++// A dir nested inside another passed root would be walked twice and list the
++// same session once per root — only the shallowest of a nested pair stays.
++func TestNestedClaudeDirsKeepTheShallowest(t *testing.T) {
++	claudeDir := t.TempDir()
++	nested := filepath.Join(claudeDir, "proj-x")
++	if err := os.MkdirAll(nested, 0o755); err != nil {
++		t.Fatal(err)
++	}
++	writeServerSession(t, filepath.Join(nested, "solo.jsonl"),
++		`{"type":"user","timestamp":"2026-07-09T00:00:00Z","sessionId":"solo-id","cwd":"/tmp","message":{"role":"user","content":"hello"}}`,
++	)
++
++	s := New(Config{ClaudeDirs: []string{claudeDir, nested}, CodexDir: filepath.Join(t.TempDir(), "codex"), PiDir: filepath.Join(t.TempDir(), "pi")})
++	if got := countClaudeAdapters(s); got != 1 {
++		t.Fatalf("claude adapters = %d, want 1 (nested dir must collapse into its parent)", got)
++	}
++	sessions, err := s.listSessions()
++	if err != nil {
++		t.Fatal(err)
++	}
++	if len(sessions) != 1 {
++		t.Fatalf("sessions = %#v, want the nested session listed exactly once", sessions)
++	}
++}
+diff --git a/internal/server/server.go b/internal/server/server.go
+index bd79d65..47de5bf 100644
+--- a/internal/server/server.go
++++ b/internal/server/server.go
+@@ -35,7 +35,12 @@ import (
+ var embeddedStatic embed.FS
+ 
+ type Config struct {
+-	Port        int
++	Port int
++	// ClaudeDirs lists every Claude Code projects directory to scan. New
++	// normalizes and dedupes the list, then builds one adapter per entry.
++	ClaudeDirs []string
++	// ClaudeDir is the single-directory form kept for callers predating
++	// multi-root support; New folds it into ClaudeDirs.
+ 	ClaudeDir   string
+ 	CodexDir    string
+ 	PiDir       string
+@@ -118,15 +123,25 @@ const (
+ )
+ 
+ func New(cfg Config) *Server {
++	claudeDirs := normalizeClaudeDirs(append(append([]string(nil), cfg.ClaudeDirs...), cfg.ClaudeDir))
++	adapters := make([]adapter.Source, 0, len(claudeDirs)+2)
++	if len(claudeDirs) == 0 {
++		// no directory configured: a single adapter over the harness default
++		adapters = append(adapters, claudecode.Adapter{})
++	}
++	for _, dir := range claudeDirs {
++		adapters = append(adapters, claudecode.Adapter{Dir: dir})
++	}
++	adapters = append(adapters, codex.Adapter{Dir: cfg.CodexDir}, pi.Adapter{Dir: cfg.PiDir})
+ 	s := &Server{
+ 		cfg:             cfg,
+-		adapters:        []adapter.Source{claudecode.Adapter{Dir: cfg.ClaudeDir}, codex.Adapter{Dir: cfg.CodexDir}, pi.Adapter{Dir: cfg.PiDir}},
++		adapters:        adapters,
+ 		agentGraphs:     map[string]agentGraphCacheEntry{},
+ 		agentGraphLoads: map[string]*inflightAgentGraph{},
+ 		summaries:       map[string]summaryCacheEntry{},
+ 		sessionCatalog:  map[string]model.SessionMeta{},
+ 		repoMaps:        map[string]repoMapEntry{},
+-		buildCityMap:    citymap.Builder{}.Build,
++		buildCityMap:    citymap.NewCachedBuilder().Build,
+ 
+ 		analyze:     analyzeState{jobs: map[string]*analyzeJob{}},
+ 		reportCache: judge.Cache{Dir: judge.DefaultCacheDir()},
+@@ -137,6 +152,87 @@ func New(cfg Config) *Server {
+ 	return s
+ }
+ 
++// normalizeClaudeDirs resolves each configured Claude Code directory to a
++// stable absolute path and drops duplicates, preserving first-seen order.
++// Two adapters over the same directory would index every session file twice
++// under two distinct keys carrying the same session ID, so findSession would
++// report every ID in that directory as ambiguous.
++func normalizeClaudeDirs(dirs []string) []string {
++	var out []string
++	for _, dir := range dirs {
++		if dir == "" {
++			continue
++		}
++		if abs, err := filepath.Abs(dir); err == nil {
++			dir = abs
++		}
++		// EvalSymlinks also canonicalizes case on case-insensitive systems;
++		// a directory that does not exist yet keeps its absolute form.
++		if resolved, err := filepath.EvalSymlinks(dir); err == nil {
++			dir = resolved
++		}
++		duplicate := false
++		for _, kept := range out {
++			if sameDir(kept, dir) {
++				duplicate = true
++				break
++			}
++		}
++		if !duplicate {
++			out = append(out, dir)
++		}
++	}
++	// A dir nested under another would be walked twice — the same session
++	// file would enter the list once per root (same Key, so findSession
++	// stays unambiguous, but the rail would show duplicates). Keep only the
++	// shallowest of any nested pair.
++	kept := make([]string, 0, len(out))
++	for i, dir := range out {
++		nested := false
++		for j, other := range out {
++			if i != j && underDir(other, dir) {
++				nested = true
++				break
++			}
++		}
++		if !nested {
++			kept = append(kept, dir)
++		}
++	}
++	return kept
++}
++
++// underDir reports whether child is strictly inside parent (both already
++// normalized by normalizeClaudeDirs).
++func underDir(parent, child string) bool {
++	if sameDir(parent, child) {
++		return false
++	}
++	rel, err := filepath.Rel(parent, child)
++	if err != nil {
++		return false
++	}
++	if rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
++		return false
++	}
++	return true
++}
++
++// sameDir reports whether two normalized paths name the same directory:
++// string-equal, case-insensitively equal on Windows, or — when both exist —
++// the same file per os.SameFile.
++func sameDir(a, b string) bool {
++	if a == b {
++		return true
++	}
++	if runtime.GOOS == "windows" && strings.EqualFold(a, b) {
++		return true
++	}
++	infoA, errA := os.Stat(a)
++	infoB, errB := os.Stat(b)
++	return errA == nil && errB == nil && os.SameFile(infoA, infoB)
++}
++
+ func (s *Server) Start(openBrowser bool) error {
+ 	port := s.cfg.Port
+ 	if port == 0 {
+diff --git a/web/src/App.tsx b/web/src/App.tsx
+index b9d3f9b..353a8c5 100644
+--- a/web/src/App.tsx
++++ b/web/src/App.tsx
+@@ -75,6 +75,11 @@ export default function App() {
+     setRailCollapsed
+   } = useAppStore();
+   const urlSessionConsumed = useRef(false);
++  // ?follow=1 turns replay into a live tail: poll the rescan path and let the
++  // playhead ride the end of a growing trace (read once at mount, like ?session=)
++  const [followMode] = useState(
++    () => new URL(window.location.href).searchParams.get("follow") === "1"
++  );
+   const scanGeneration = useRef(0);
+   const loadGeneration = useRef(0);
+   const lensGeneration = useRef(0);
+@@ -216,12 +221,22 @@ export default function App() {
+     }
+   }, [beginLoading, endLoading, setCurrentSeq, setData, setError, setSelectedPath]);
+ 
++  // stick-to-tail: a playhead parked at the end of the trace means "show me
++  // the latest", not a pinned position — forget it, so setData's default (the
++  // end of the refreshed, possibly longer trace) wins after a reload; a
++  // rewound playhead is deliberate and is still remembered and restored
++  const rememberActorPlayhead = useCallback((actorKey: string) => {
++    const { trace: shownTrace, currentSeq: seq } = useAppStore.getState();
++    if (shownTrace && seq < shownTrace.events.length - 1) {
++      actorPlayheads.current.set(actorKey, seq);
++    } else {
++      actorPlayheads.current.delete(actorKey);
++    }
++  }, []);
++
+   const invalidateActorTracesForRescan = useCallback(() => {
+     const activeActorID = activeAgentIDRef.current;
+-    actorPlayheads.current.set(
+-      activeActorID ?? MAIN_ACTOR_KEY,
+-      useAppStore.getState().currentSeq
+-    );
++    rememberActorPlayhead(activeActorID ?? MAIN_ACTOR_KEY);
+     agentTraceRequest.current++;
+     pendingAgentIDRef.current = undefined;
+     actorTraceCache.current.clear();
+@@ -241,7 +256,7 @@ export default function App() {
+       }
+       setSelectedPath(undefined);
+     }
+-  }, [setCurrentSeq, setData, setSelectedPath]);
++  }, [rememberActorPlayhead, setCurrentSeq, setData, setSelectedPath]);
+ 
+   const scan = useCallback(async (fresh: boolean) => {
+     const generation = ++scanGeneration.current;
+@@ -325,9 +340,8 @@ export default function App() {
+   }, [loadAgentGraph, loadSession, resetLens, setActiveSession]);
+ 
+   const saveActivePlayhead = useCallback(() => {
+-    const key = activeAgentIDRef.current ?? MAIN_ACTOR_KEY;
+-    actorPlayheads.current.set(key, useAppStore.getState().currentSeq);
+-  }, []);
++    rememberActorPlayhead(activeAgentIDRef.current ?? MAIN_ACTOR_KEY);
++  }, [rememberActorPlayhead]);
+ 
+   const showCachedActor = useCallback((agentID: string | null, nextTrace: Trace, nextCity: CityMap) => {
+     saveActivePlayhead();
+@@ -500,6 +514,16 @@ export default function App() {
+     });
+   }, [scan, refreshReport, mapOnly]);
+ 
++  // follow mode: poll the manual-rescan path so a live session advances the
++  // stage on its own; refresh() already dedupes overlapping runs
++  // (manualRefreshInFlight) and respects the export lock, and stick-to-tail
++  // above keeps the playhead riding the end of the growing trace
++  useEffect(() => {
++    if (!followMode || mapOnly || !activeSessionKey) return;
++    const timer = setInterval(refresh, 5000);
++    return () => clearInterval(timer);
++  }, [followMode, mapOnly, activeSessionKey, refresh]);
++
+   useEffect(() => {
+     if (reportStatus?.state !== "running" || !activeSessionKey) return;
+     const timer = setInterval(() => {

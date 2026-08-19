@@ -2,7 +2,18 @@
 
 - **Data**: 2026-08-19
 - **Autor do card**: Rodrigo Campos (plano P0-P7; este cobre P4-P6)
-- **Coluna**: Fazendo
+- **Coluna**: A fazer
+
+> **REPROVADO E SUPERADO (19/08, gate do comandante)**: o visual entregue foi
+> reprovado ("a diferença é absurda... parece um mock fake, carregado e
+> errado... não funciona at all") e a direção mudou por ordem direta:
+> "https://github.com/cosmtrek/mindwalk esse é o repositório que deveria estar
+> dentro dessa janela" + "tem que funcionar em windows, linux e mac".
+> Reproduzir o mindwalk em Canvas 2D caseiro deixou de ser o alvo — o alvo é
+> embutir o mindwalk REAL. Este card volta para "A fazer" e fica superado pelo
+> card `mindwalk-real-no-micahs-mind-2026-08-19.md`, que absorve o que dele
+> sobrevive (âncora P4 já entregue e mantida; cenários P6 viram critérios de
+> estado do novo painel). Não retomar este card sem ordem expressa.
 
 ## Descricao
 

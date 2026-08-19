@@ -4,7 +4,10 @@ on:
   pull_request:
     branches: [main]
   push:
-    branches: [main]
+    # card/** lets a card branch prove the matrix without publishing main
+    # (decisão registrada no card mindwalk-real: main não é tocado pelo
+    # executor; o push de main é do comandante).
+    branches: [main, "card/**"]
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -126,6 +129,41 @@ jobs:
       - name: cargo nextest
         working-directory: src-tauri
         run: cargo nextest run --locked --retries 2
+
+  # Builds the mindwalk sidecar (fork pinned in scripts/mindwalk) for every
+  # release target from one leg — pure Go, CGO off, so cross-compiling is
+  # native. --test runs the upstream+patch Go suite, green on linux (three
+  # upstream citymap tests are environmentally red on Windows: symlink
+  # privilege and unix dir semantics). The uploaded artifacts are proof of
+  # buildability; the release flow rebuilds per leg (a zip artifact drops the
+  # unix exec bit, so these are never shipped as-is).
+  mindwalk:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: stable
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+
+      - name: Build and test (linux x64)
+        run: MICAH_MINDWALK_TARGET=x86_64-unknown-linux-gnu node scripts/mindwalk/build-mindwalk.mjs --test
+
+      - name: Cross-compile the other release targets
+        run: |
+          MICAH_MINDWALK_TARGET=x86_64-pc-windows-msvc node scripts/mindwalk/build-mindwalk.mjs
+          MICAH_MINDWALK_TARGET=aarch64-apple-darwin node scripts/mindwalk/build-mindwalk.mjs
+          MICAH_MINDWALK_TARGET=x86_64-apple-darwin node scripts/mindwalk/build-mindwalk.mjs
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: mindwalk-sidecars
+          path: src-tauri/binaries/mindwalk-*
+          if-no-files-found: error
 
   coverage:
     runs-on: ubuntu-22.04

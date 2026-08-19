@@ -55,6 +55,12 @@ jobs:
         with:
           targets: ${{ matrix.rust-target }}
 
+      # beforeBuildCommand runs pnpm build:mindwalk (the mindwalk sidecar is
+      # built from the pinned fork in scripts/mindwalk; needs Go, not Rust).
+      - uses: actions/setup-go@v6
+        with:
+          go-version: stable
+
       - uses: swatinem/rust-cache@v2
         with:
           workspaces: ./src-tauri -> target
