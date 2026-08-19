@@ -19,6 +19,10 @@ import {
 import { invoke } from "@tauri-apps/api/core";
 import { lazy, Suspense, useEffect, useMemo, useState } from "react";
 import {
+  attachPaneSession,
+  freezePaneCity,
+} from "./lib/paneAnchor";
+import {
   type MindSessionPick,
   composePick,
   pickMindSession,
@@ -191,6 +195,23 @@ export function MicahsMindArea({
   }, [autoKey, focusedCwd, scannable, manualSession, anchoredPick.session, auto?.forCwd]);
 
   const feed = useMindFeed(pick, active, scannable ? focusedCwd : null);
+
+  // P4: the pane IS the identity — record what it follows and keep the
+  // frozen city on record when a transcript dies under it.
+  useEffect(() => {
+    if (activeLeafId == null || !pick.session) return;
+    attachPaneSession(activeLeafId, pick.session);
+  }, [activeLeafId, pick.session]);
+  useEffect(() => {
+    if (activeLeafId == null || feed.status !== "missing" || !pick.session)
+      return;
+    freezePaneCity(
+      activeLeafId,
+      pick.session,
+      feed.city?.files.length ?? 0,
+      feed.fold?.events.length ?? 0,
+    );
+  }, [activeLeafId, feed.status, feed.city, feed.fold, pick.session]);
 
   // Provenance badge: a replayed session must never read as "ao vivo"
   // (auditor 1, criterion 2).

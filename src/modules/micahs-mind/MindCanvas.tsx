@@ -6,7 +6,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CityFile, CityMap, Rect } from "./lib/citymap";
-import { cleanRel } from "./lib/citymap";
+import { cleanRel, RADIAL_CENTER } from "./lib/citymap";
 import type { MindFeed } from "./lib/useMindFeed";
 
 const WORLD = 120;
@@ -264,14 +264,19 @@ export function MindCanvas({
       if (!city) return null;
       if (cy > sizeRef.current.h - TIMELINE_H) return null;
       const { wx, wz } = toWorld(cx, cy);
+      // Polar hit-test: the nearest node within its own radius (with a
+      // small floor so tiny dots stay clickable at deep zoom-out).
+      const floor = 1.1 / cameraRef.current.scale;
       let best: string | null = null;
-      let bestArea = Number.POSITIVE_INFINITY;
+      let bestDist = Number.POSITIVE_INFINITY;
       const consider = (path: string, rect: Rect): void => {
-        if (wx < rect.x || wz < rect.z) return;
-        if (wx > rect.x + rect.w || wz > rect.z + rect.d) return;
-        const area = rect.w * rect.d;
-        if (area < bestArea) {
-          bestArea = area;
+        const nx = rect.x + rect.w / 2;
+        const nz = rect.z + rect.d / 2;
+        const nodeR = Math.max(rect.w, rect.d) / 2;
+        const dist = Math.hypot(wx - nx, wz - nz);
+        const reach = Math.max(nodeR, floor);
+        if (dist <= reach && dist < bestDist) {
+          bestDist = dist;
           best = path;
         }
       };
@@ -544,7 +549,12 @@ function render(
   const { w, h, dpr } = size;
   if (w <= 0 || h <= 0) return;
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  ctx.fillStyle = "#07090f";
+  // Night sky: darker at the edges, a breath of blue at the center.
+  const sky = ctx.createRadialGradient(w / 2, (h - TIMELINE_H) / 2, 0, w / 2, (h - TIMELINE_H) / 2, Math.max(w, h) * 0.7);
+  sky.addColorStop(0, "#0c1428");
+  sky.addColorStop(0.55, "#080d1c");
+  sky.addColorStop(1, "#04060e");
+  ctx.fillStyle = sky;
   ctx.fillRect(0, 0, w, h);
   const cityH = h - TIMELINE_H;
   const latestSeq =
@@ -560,12 +570,29 @@ function render(
   ctx.translate(-cam.x, -cam.z);
 
   if (city) {
+    // Branches: each directory is an annular sector — arc on its outer
+    // ring plus two faint radial spokes delimiting its wedge.
+    ctx.strokeStyle = DIR_EDGE;
+    ctx.lineWidth = 0.9 / cam.scale;
     for (const dir of city.dirs) {
-      const r = dir.rect;
-      if (!visible(r, cam, w, cityH)) continue;
-      ctx.strokeStyle = DIR_EDGE;
-      ctx.lineWidth = 1 / cam.scale;
-      ctx.strokeRect(r.x, r.z, r.w, r.d);
+      if (!visible(dir.rect, cam, w, cityH)) continue;
+      const { a0, a1, r0, r1 } = dir.polar;
+      const midR = (r0 + r1) / 2;
+      ctx.beginPath();
+      ctx.arc(RADIAL_CENTER, RADIAL_CENTER, midR, a0, a1);
+      ctx.stroke();
+      for (const a of [a0, a1]) {
+        ctx.beginPath();
+        ctx.moveTo(
+          RADIAL_CENTER + Math.cos(a) * r0,
+          RADIAL_CENTER + Math.sin(a) * r0,
+        );
+        ctx.lineTo(
+          RADIAL_CENTER + Math.cos(a) * r1,
+          RADIAL_CENTER + Math.sin(a) * r1,
+        );
+        ctx.stroke();
+      }
     }
     for (const f of city.files) {
       drawFile(
@@ -633,28 +660,28 @@ function drawFile(
 ): void {
   const touch = touchAt(f.path);
   const r = f.rect;
-  const px = Math.max(r.w, r.d) * cam.scale;
+  const cxw = r.x + r.w / 2;
+  const czw = r.z + r.d / 2;
+  const radius = Math.max(r.w, r.d) / 2;
+  const px = radius * 2 * cam.scale;
   const minPx = Math.max(1.2, Math.min(4, 2000 / Math.max(fileCount, 1)));
   if (px < minPx && !touch && selected !== f.path && hover !== f.path) {
     // LOD: deep zoom-out, untouched specks collapse to a single pixel.
     ctx.fillStyle = UNVISITED_EDGE;
-    ctx.fillRect(
-      r.x,
-      r.z,
-      Math.max(r.w, 0.5 / cam.scale),
-      Math.max(r.d, 0.5 / cam.scale),
-    );
+    ctx.beginPath();
+    ctx.arc(cxw, czw, Math.max(radius, 0.4 / cam.scale), 0, Math.PI * 2);
+    ctx.fill();
     return;
   }
-  const cxw = r.x + r.w / 2;
-  const czw = r.z + r.d / 2;
   if (!touch) {
     ctx.fillStyle = f.ghost ? "rgba(248,113,113,0.12)" : UNVISITED_FILL;
-    ctx.fillRect(r.x, r.z, r.w, r.d);
+    ctx.beginPath();
+    ctx.arc(cxw, czw, radius, 0, Math.PI * 2);
+    ctx.fill();
     if (px > 3) {
       ctx.strokeStyle = UNVISITED_EDGE;
       ctx.lineWidth = 0.5 / cam.scale;
-      ctx.strokeRect(r.x, r.z, r.w, r.d);
+      ctx.stroke();
     }
   } else {
     const sprite =
@@ -664,8 +691,7 @@ function drawFile(
           ? sprites.read
           : sprites.hit;
     const color = TOUCH_COLOR[touch];
-    const radius = Math.max(Math.min(r.w, r.d) / 2, 0.5 / cam.scale);
-    const glowR = Math.max(radius * 3, 2.2 / cam.scale);
+    const glowR = Math.max(radius * 3.2, 2.2 / cam.scale);
     if (sprite) {
       ctx.globalAlpha = 0.85;
       ctx.drawImage(sprite, cxw - glowR, czw - glowR, glowR * 2, glowR * 2);
@@ -691,12 +717,9 @@ function drawFile(
   if (selected === f.path || hover === f.path) {
     ctx.strokeStyle = "#e2e8f0";
     ctx.lineWidth = 1.2 / cam.scale;
-    ctx.strokeRect(
-      r.x - 0.6 / cam.scale,
-      r.z - 0.6 / cam.scale,
-      r.w + 1.2 / cam.scale,
-      r.d + 1.2 / cam.scale,
-    );
+    ctx.beginPath();
+    ctx.arc(cxw, czw, radius + 0.8 / cam.scale, 0, Math.PI * 2);
+    ctx.stroke();
   }
 }
 

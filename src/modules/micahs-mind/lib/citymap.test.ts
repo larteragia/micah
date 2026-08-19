@@ -5,6 +5,8 @@ import {
   cleanRel,
   langForPath,
   placeGhost,
+  RADIAL_CENTER,
+  RADIAL_MAX_R,
 } from "./citymap";
 
 function entry(rel: string, lines = 100): CityEntry {
@@ -30,7 +32,7 @@ describe("langForPath", () => {
   });
 });
 
-describe("buildCityMap", () => {
+describe("buildCityMap (radial sunburst)", () => {
   const entries: CityEntry[] = [
     entry("src/App.tsx", 400),
     entry("src/main.tsx", 50),
@@ -46,35 +48,43 @@ describe("buildCityMap", () => {
     expect(b.dirs).toEqual(a.dirs);
   });
 
-  it("fills the 120x120 world with non-overlapping, positive rects", () => {
+  it("seats every file on a ring inside the world, with a positive AABB", () => {
     const city = buildCityMap({ root: "C:/repo", entries, touched: [] });
     for (const f of city.files) {
-      expect(f.rect.w).toBeGreaterThan(0);
-      expect(f.rect.d).toBeGreaterThan(0);
+      expect(f.polar.r).toBeGreaterThan(0);
+      expect(f.polar.r).toBeLessThanOrEqual(RADIAL_MAX_R + 0.001);
+      expect(f.polar.size).toBeGreaterThan(0);
+      // AABB is the dot square around the polar position
+      const cx = RADIAL_CENTER + Math.cos(f.polar.a) * f.polar.r;
+      const cz = RADIAL_CENTER + Math.sin(f.polar.a) * f.polar.r;
+      expect(f.rect.x + f.rect.w / 2).toBeCloseTo(cx, 6);
+      expect(f.rect.z + f.rect.d / 2).toBeCloseTo(cz, 6);
       expect(f.rect.x).toBeGreaterThanOrEqual(0);
       expect(f.rect.z).toBeGreaterThanOrEqual(0);
       expect(f.rect.x + f.rect.w).toBeLessThanOrEqual(120.0001);
       expect(f.rect.z + f.rect.d).toBeLessThanOrEqual(120.0001);
     }
-    // siblings within the same dir must not overlap each other
-    const byDir = new Map<string, typeof city.files>();
-    for (const f of city.files) {
-      const list = byDir.get(f.dir) ?? [];
-      list.push(f);
-      byDir.set(f.dir, list);
-    }
-    for (const list of byDir.values()) {
-      for (let i = 0; i < list.length; i++) {
-        for (let j = i + 1; j < list.length; j++) {
-          const a = list[i].rect;
-          const b = list[j].rect;
-          const overlaps =
-            a.x < b.x + b.w &&
-            b.x < a.x + a.w &&
-            a.z < b.z + b.d &&
-            b.z < a.z + a.d;
-          expect(overlaps).toBe(false);
-        }
+  });
+
+  it("deeper files sit on outer rings and dirs own contiguous wedges", () => {
+    const city = buildCityMap({ root: "C:/repo", entries, touched: [] });
+    const rootFile = city.files.find((f) => f.path === "package.json");
+    const deep = city.files.find(
+      (f) => f.path === "src/modules/left-panel/index.ts",
+    );
+    expect(deep?.polar.r).toBeGreaterThan(rootFile?.polar.r ?? 0);
+    const src = city.dirs.find((d) => d.path === "src");
+    expect(src).toBeTruthy();
+    if (src) {
+      expect(src.polar.a1).toBeGreaterThan(src.polar.a0);
+      expect(src.polar.r1).toBeGreaterThan(src.polar.r0);
+      // files of src sit inside src's ring band
+      for (const f of city.files.filter((x) => x.dir === "src")) {
+        expect(f.polar.r).toBeGreaterThan(src.polar.r0);
+        expect(f.polar.r).toBeLessThanOrEqual(src.polar.r1);
+        const a = ((f.polar.a - src.polar.a0) % (Math.PI * 2) + Math.PI * 2) %
+          (Math.PI * 2);
+        expect(a).toBeLessThanOrEqual(src.polar.a1 - src.polar.a0 + 1e-9);
       }
     }
   });
@@ -96,7 +106,6 @@ describe("buildCityMap", () => {
     expect(
       city.files.find((f) => f.path === "docs/weak-miss.md"),
     ).toBeUndefined();
-    // touched existing seats even when the scan list is empty
     const tiny = buildCityMap({
       root: "C:/repo",
       entries: [],
@@ -104,7 +113,6 @@ describe("buildCityMap", () => {
     });
     expect(tiny.files).toHaveLength(1);
     expect(tiny.files[0]?.ghost).toBe(true);
-    // a failed scan never lies with ghosts: existence unknown seats real
     const noscan = buildCityMap({
       root: "C:/repo",
       entries: null,
@@ -114,18 +122,16 @@ describe("buildCityMap", () => {
     expect(noscan.truncated).toBe(true);
   });
 
-  it("larger files get larger rects", () => {
+  it("heavier files get bigger nodes", () => {
     const city = buildCityMap({ root: "C:/repo", entries, touched: [] });
     const app = city.files.find((f) => f.path === "src/App.tsx");
     const readme = city.files.find((f) => f.path === "README.md");
-    expect((app?.rect.w ?? 0) * (app?.rect.d ?? 0)).toBeGreaterThan(
-      (readme?.rect.w ?? 0) * (readme?.rect.d ?? 0),
-    );
+    expect(app?.polar.size).toBeGreaterThan(readme?.polar.size ?? 0);
   });
 });
 
 describe("placeGhost", () => {
-  it("places late ghosts inside the deepest known dir, deterministically", () => {
+  it("places late ghosts at the outer edge of the deepest dir wedge, deterministically", () => {
     const city = buildCityMap({
       root: "C:/repo",
       entries: [entry("src/App.tsx"), entry("src/lib/b.ts")],
@@ -137,9 +143,15 @@ describe("placeGhost", () => {
     const libDir = city.dirs.find((d) => d.path === "src/lib");
     expect(libDir).toBeTruthy();
     if (!libDir) return;
-    expect(a.x).toBeGreaterThanOrEqual(libDir.rect.x - 1);
-    expect(a.x + a.w).toBeLessThanOrEqual(libDir.rect.x + libDir.rect.w + 1);
-    expect(a.z).toBeGreaterThanOrEqual(libDir.rect.z - 1);
-    expect(a.z + a.d).toBeLessThanOrEqual(libDir.rect.z + libDir.rect.d + 1);
+    const cx = a.x + a.w / 2;
+    const cz = a.z + a.d / 2;
+    const r = Math.hypot(cx - RADIAL_CENTER, cz - RADIAL_CENTER);
+    expect(r).toBeGreaterThanOrEqual(libDir.polar.r1);
+    expect(r).toBeLessThanOrEqual(RADIAL_MAX_R + 1.5);
+    const ang = Math.atan2(cz - RADIAL_CENTER, cx - RADIAL_CENTER);
+    const span = libDir.polar.a1 - libDir.polar.a0;
+    const rel = ((ang - libDir.polar.a0) % (Math.PI * 2) + Math.PI * 2) %
+      (Math.PI * 2);
+    expect(rel).toBeLessThanOrEqual(Math.min(span + 1e-6, Math.PI * 2));
   });
 });

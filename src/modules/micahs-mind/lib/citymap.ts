@@ -1,18 +1,27 @@
 /**
- * Deterministic city layout for Micah's Mind: a port of mindwalk's
- * squarified-treemap-v1 citymap builder (internal/citymap/builder.go, MIT,
- * Ricko Yu; see LICENSES/mindwalk.txt). Same tree in, same map out: children
- * sort by weight desc then name, weights are sqrt(max(lines, bytes/4096,
- * 16)) with a uniform floor when the scanner does not measure size, and
- * rects are inset and aspect-capped exactly like the original.
+ * Deterministic city layout for Micah's Mind: a radial sunburst tree (the
+ * reference look the commander chose — branches out of a center, luminous
+ * leaves, night depth), ported in spirit from mindwalk's citymap builder
+ * (MIT, Ricko Yu; see LICENSES/mindwalk.txt): same tree in, same map out.
+ * Children sort by weight desc then name, weights are sqrt(max(lines,
+ * bytes/4096, 16)), and each child's wedge is proportional to its subtree
+ * weight (auditor correction 2 of the p4p6 card: no hash-angles — hash
+ * only jitters ghosts).
  *
- * Live-growth policy (auditor correction 7): the layout is built once per
- * session snapshot and frozen; files touched later that the snapshot never
- * saw become ghost points placed inside their parent directory's rect
+ * Bridge for the renderer (auditor correction 1): nodes carry polar coords
+ * {a, r, size} AND keep `rect` as the AABB around the node, so culling,
+ * AABB-based ghosts and existing consumers survive untouched.
+ *
+ * Live-growth policy: the layout is built once per session snapshot and
+ * frozen; files touched later that the snapshot never saw become ghost
+ * points placed in the outer edge of their parent directory's wedge,
  * without moving anything else, so the city never jumps under the camera.
  */
 
 export type Rect = { x: number; z: number; w: number; d: number };
+
+/** Polar placement: angle in radians from the top, radius/size in world units. */
+export type Polar = { a: number; r: number; size: number };
 
 export type CityFile = {
   id: number;
@@ -22,6 +31,7 @@ export type CityFile = {
   bytes: number;
   lang: string;
   rect: Rect;
+  polar: Polar;
   ghost: boolean;
 };
 
@@ -29,6 +39,8 @@ export type CityDir = {
   path: string;
   depth: number;
   rect: Rect;
+  /** Wedge of the annular sector this directory owns. */
+  polar: { a0: number; a1: number; r0: number; r1: number };
   fileCount: number;
   lines: number;
 };
@@ -110,7 +122,7 @@ type Node = {
   weight: number;
   fileCount: number;
   lines: number;
-  rect?: Rect;
+  depth?: number;
 };
 
 function splitPath(path: string): string[] {
@@ -174,182 +186,125 @@ function sortedChildren(children: Map<string, Node>): Node[] {
   return [...children.keys()].sort().map((name) => children.get(name) as Node);
 }
 
-type LayoutItem = {
-  name: string;
-  kind: "dir" | "file";
-  idx: number;
-  node?: Node;
-  weight: number;
-  area: number;
-};
+/** World geometry: the radial city lives in the same 120x120 world the
+ * camera already fits, centered, outer ring inside the corners. */
+export const RADIAL_CENTER = 60;
+export const RADIAL_MAX_R = 56;
+const START_ANGLE = -Math.PI / 2;
 
-type PlacedItem = { item: LayoutItem; rect: Rect };
-
-function worstAspect(row: LayoutItem[], side: number): number {
-  if (row.length === 0 || side <= 0) return Number.POSITIVE_INFINITY;
-  let sum = 0;
-  let minArea = Number.POSITIVE_INFINITY;
-  let maxArea = 0;
-  for (const item of row) {
-    sum += item.area;
-    if (item.area < minArea) minArea = item.area;
-    if (item.area > maxArea) maxArea = item.area;
+function treeDepth(n: Node): number {
+  let max = 0;
+  for (const child of n.children.values()) {
+    max = Math.max(max, treeDepth(child) + 1);
   }
-  if (sum <= 0 || minArea <= 0) return Number.POSITIVE_INFINITY;
-  const side2 = side * side;
-  const sum2 = sum * sum;
-  return Math.max((side2 * maxArea) / sum2, sum2 / (side2 * minArea));
+  return max;
 }
 
-function layoutRow(
-  rect: Rect,
-  row: LayoutItem[],
-): { placed: PlacedItem[]; rest: Rect } {
-  let sum = 0;
-  for (const item of row) sum += item.area;
-  if (sum <= 0) return { placed: [], rest: rect };
-  const placed: PlacedItem[] = [];
-  const rest = { ...rect };
-  if (rect.w >= rect.d) {
-    const rowD = sum / rect.w;
-    let x = rect.x;
-    for (let i = 0; i < row.length; i++) {
-      const item = row[i];
-      let w = item.area / rowD;
-      if (i === row.length - 1) w = rect.x + rect.w - x;
-      placed.push({ item, rect: { x, z: rect.z, w, d: rowD } });
-      x += w;
+function dotRadius(weight: number): number {
+  return Math.min(3, Math.max(0.35, 0.35 + weight * 0.045));
+}
+
+function sectorAabb(a0: number, a1: number, r0: number, r1: number): Rect {
+  let minX = Number.POSITIVE_INFINITY;
+  let maxX = Number.NEGATIVE_INFINITY;
+  let minZ = Number.POSITIVE_INFINITY;
+  let maxZ = Number.NEGATIVE_INFINITY;
+  const steps = Math.max(2, Math.ceil(((a1 - a0) / Math.PI) * 8));
+  for (let i = 0; i <= steps; i++) {
+    const a = a0 + ((a1 - a0) * i) / steps;
+    for (const r of [r0, r1]) {
+      const x = RADIAL_CENTER + Math.cos(a) * r;
+      const z = RADIAL_CENTER + Math.sin(a) * r;
+      minX = Math.min(minX, x);
+      maxX = Math.max(maxX, x);
+      minZ = Math.min(minZ, z);
+      maxZ = Math.max(maxZ, z);
     }
-    rest.z += rowD;
-    rest.d -= rowD;
-  } else {
-    const rowW = sum / rect.d;
-    let z = rect.z;
-    for (let i = 0; i < row.length; i++) {
-      const item = row[i];
-      let d = item.area / rowW;
-      if (i === row.length - 1) d = rect.z + rect.d - z;
-      placed.push({ item, rect: { x: rect.x, z, w: rowW, d } });
-      z += d;
-    }
-    rest.x += rowW;
-    rest.w -= rowW;
   }
-  if (rest.w < 0) rest.w = 0;
-  if (rest.d < 0) rest.d = 0;
-  return { placed, rest };
+  return { x: minX, z: minZ, w: maxX - minX, d: maxZ - minZ };
 }
 
-function squarify(rect: Rect, items: LayoutItem[]): PlacedItem[] {
-  let remaining = { ...rect };
-  const placed: PlacedItem[] = [];
-  let row: LayoutItem[] = [];
-  for (let idx = 0; idx < items.length; idx++) {
-    const item = items[idx];
-    if (item.area <= 0) continue;
-    const side = Math.min(remaining.w, remaining.d);
-    const candidate = [...row, item];
-    if (
-      row.length < 2 ||
-      idx === items.length - 1 ||
-      worstAspect(candidate, side) <= worstAspect(row, side)
-    ) {
-      row = candidate;
-      continue;
-    }
-    const out = layoutRow(remaining, row);
-    placed.push(...out.placed);
-    remaining = out.rest;
-    row = [item];
-  }
-  if (row.length > 0) {
-    const out = layoutRow(remaining, row);
-    placed.push(...out.placed);
-  }
-  return placed;
+function polarToRect(a: number, r: number, size: number): Rect {
+  const x = RADIAL_CENTER + Math.cos(a) * r;
+  const z = RADIAL_CENTER + Math.sin(a) * r;
+  return { x: x - size, z: z - size, w: size * 2, d: size * 2 };
 }
 
-function inset(rect: Rect, pad: number): Rect {
-  const r = { ...rect };
-  if (r.w > pad * 2) {
-    r.x += pad;
-    r.w -= pad * 2;
-  }
-  if (r.d > pad * 2) {
-    r.z += pad;
-    r.d -= pad * 2;
-  }
-  return r;
-}
-
-function capAspect(rect: Rect, maxRatio: number): Rect {
-  const r = { ...rect };
-  if (r.w <= 0 || r.d <= 0 || maxRatio <= 1) return r;
-  if (r.w / r.d > maxRatio) {
-    const newW = r.d * maxRatio;
-    r.x += (r.w - newW) / 2;
-    r.w = newW;
-  } else if (r.d / r.w > maxRatio) {
-    const newD = r.w * maxRatio;
-    r.z += (r.d - newD) / 2;
-    r.d = newD;
-  }
-  return r;
-}
-
-function layoutNode(
-  n: Node,
-  rect: Rect,
+/**
+ * Radial sunburst layout: every node owns a wedge of its parent's annulus
+ * proportional to subtree weight, children in the frozen sorted order
+ * (weight desc then name — same tree always produces the same map). Files
+ * sit at the middle of their own sub-wedge on the band of their depth.
+ */
+function layoutRadial(
+  root: Node,
   files: CityFile[],
   dirs: CityDir[],
 ): void {
-  n.rect = rect;
-  if (n.path !== "") {
-    dirs.push({
-      path: n.path,
-      depth: n.path.split("/").length,
-      rect,
-      fileCount: n.fileCount,
-      lines: n.lines,
-    });
-  }
-  const items: LayoutItem[] = [];
-  for (const child of sortedChildren(n.children)) {
-    items.push({
-      name: child.name,
-      kind: "dir",
-      idx: -1,
-      node: child,
-      weight: child.weight,
-      area: 0,
-    });
-  }
-  for (const idx of n.files) {
-    items.push({
-      name: files[idx].path,
-      kind: "file",
-      idx,
-      weight: fileWeight(files[idx]),
-      area: 0,
-    });
-  }
-  items.sort((a, b) => {
-    if (a.weight === b.weight) return a.name < b.name ? -1 : 1;
-    return a.weight > b.weight ? -1 : 1;
-  });
-  let total = 0;
-  for (const item of items) total += item.weight;
-  if (total <= 0) return;
-  const scale = (rect.w * rect.d) / total;
-  for (const item of items) item.area = item.weight * scale;
-  for (const placed of squarify(rect, items)) {
-    const childRect = capAspect(inset(placed.rect, 0.08), 40);
-    if (placed.item.kind === "dir" && placed.item.node) {
-      layoutNode(placed.item.node, childRect, files, dirs);
-    } else {
-      files[placed.item.idx].rect = childRect;
+  const rings = treeDepth(root) + 1;
+  const ringW = RADIAL_MAX_R / rings;
+
+  const assign = (n: Node, a0: number, a1: number, depth: number): void => {
+    const r0 = depth * ringW;
+    const r1 = r0 + ringW;
+    if (n.path !== "") {
+      dirs.push({
+        path: n.path,
+        depth,
+        rect: sectorAabb(a0, a1, r0, r1),
+        polar: { a0, a1, r0, r1 },
+        fileCount: n.fileCount,
+        lines: n.lines,
+      });
     }
-  }
+    const items: Array<{
+      name: string;
+      kind: "dir" | "file";
+      idx: number;
+      node?: Node;
+      weight: number;
+    }> = [];
+    for (const child of sortedChildren(n.children)) {
+      items.push({
+        name: child.name,
+        kind: "dir",
+        idx: -1,
+        node: child,
+        weight: child.weight,
+      });
+    }
+    for (const idx of n.files) {
+      items.push({
+        name: files[idx].path,
+        kind: "file",
+        idx,
+        weight: fileWeight(files[idx]),
+      });
+    }
+    items.sort((a, b) => {
+      if (a.weight === b.weight) return a.name < b.name ? -1 : 1;
+      return a.weight > b.weight ? -1 : 1;
+    });
+    let total = 0;
+    for (const item of items) total += item.weight;
+    if (total <= 0) return;
+    let a = a0;
+    for (const item of items) {
+      const wedge = ((a1 - a0) * item.weight) / total;
+      if (item.kind === "dir" && item.node) {
+        assign(item.node, a, a + wedge, depth + 1);
+      } else {
+        const mid = a + wedge / 2;
+        const r = r0 + ringW * 0.5;
+        const size = dotRadius(item.weight);
+        files[item.idx].polar = { a: mid, r, size };
+        files[item.idx].rect = polarToRect(mid, r, size);
+      }
+      a += wedge;
+    }
+  };
+
+  assign(root, START_ANGLE, START_ANGLE + Math.PI * 2, 0);
 }
 
 /** Repo-relative slash path or "" when it escapes or is absolute. */
@@ -402,6 +357,7 @@ export function buildCityMap(input: BuildCityInput): CityMap {
       bytes: entry?.bytes ?? 0,
       lang: langForPath(rel),
       rect: { x: 0, z: 0, w: 0, d: 0 },
+      polar: { a: 0, r: 0, size: 0.6 },
       ghost,
     });
   };
@@ -457,7 +413,7 @@ export function buildCityMap(input: BuildCityInput): CityMap {
 
   const dirs: CityDir[] = [];
   const rootNode = buildTree(files);
-  layoutNode(rootNode, { x: 0, z: 0, w: 120, d: 120 }, files, dirs);
+  layoutRadial(rootNode, files, dirs);
 
   return {
     version: 1,
@@ -466,7 +422,7 @@ export function buildCityMap(input: BuildCityInput): CityMap {
     files,
     dirs,
     layout: {
-      algorithm: "squarified-treemap-v1",
+      algorithm: "radial-sunburst-v2",
       weight: "sqrt(max(lines, bytes/4096, 16))",
     },
   };
@@ -474,8 +430,9 @@ export function buildCityMap(input: BuildCityInput): CityMap {
 
 /**
  * Place a late ghost (touched after the snapshot froze) without relayout:
- * centered in the deepest known directory rect that is its ancestor, else
- * near the center of the map. Pure and deterministic.
+ * in the outer edge of the deepest known directory's wedge — the map edge
+ * beyond the frozen rings — with a stable spiral jitter by hash so stacked
+ * ghosts of the same dir do not overlap. Pure and deterministic.
  */
 export function placeGhost(city: CityMap, rel: string): Rect {
   let best: CityDir | undefined;
@@ -484,18 +441,21 @@ export function placeGhost(city: CityMap, rel: string): Rect {
       if (!best || dir.depth > best.depth) best = dir;
     }
   }
-  const base = best?.rect ?? { x: 0, z: 0, w: 120, d: 120 };
-  // Hash the tail into a stable offset so stacked ghosts do not overlap
-  // perfectly at the center.
   let h = 2166136261;
   for (let i = 0; i < rel.length; i++) {
     h ^= rel.charCodeAt(i);
     h = Math.imul(h, 16777619);
   }
-  const angle = ((h >>> 0) % 628) / 100;
-  const radius = Math.min(base.w, base.d) * 0.3;
-  const cx = base.x + base.w / 2 + Math.cos(angle) * radius;
-  const cz = base.z + base.d / 2 + Math.sin(angle) * radius;
+  const hh = h >>> 0;
+  const wedge = best?.polar;
+  const a0 = wedge ? wedge.a0 : START_ANGLE;
+  const a1 = wedge ? wedge.a1 : START_ANGLE + Math.PI * 2;
+  const a = a0 + ((hh % 1000) / 1000) * (a1 - a0);
+  const inner = wedge ? wedge.r1 : 0;
+  const r = Math.min(
+    RADIAL_MAX_R,
+    inner + 1 + ((Math.floor(hh / 1000) % 100) / 100) * 4,
+  );
   const size = 0.6;
-  return { x: cx - size / 2, z: cz - size / 2, w: size, d: size };
+  return polarToRect(a, r, size);
 }
